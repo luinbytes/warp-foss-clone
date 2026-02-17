@@ -1,0 +1,53 @@
+[package]
+name = "warp-foss"
+version = "0.1.0"
+edition = "2021"
+authors = ["Lumi <lumi@clawdhub.com>"]
+description = "A FOSS clone of Warp terminal with AI integration"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/luinbytes/warp-foss-clone"
+keywords = ["terminal", "warp", "ai", "rust"]
+categories = ["command-line-interface", "development-tools"]
+
+[dependencies]
+# Terminal emulation
+vte = "0.13"
+portable-pty = "0.8"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# GPU rendering
+wgpu = "24"
+winit = "0.30"
+
+# Font rendering
+fontdue = "0.9"
+
+# Config
+toml = "0.8"
+serde = { version = "1", features = ["derive"] }
+
+# AI providers
+reqwest = { version = "0.12", features = ["json", "stream"] }
+serde_json = "1"
+async-trait = "0.1"
+futures = "0.3"
+
+# Keychain
+keyring = "3"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[[bin]]
+name = "warp-foss"
+path = "src/main.rs"
