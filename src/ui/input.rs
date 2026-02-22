@@ -39,6 +39,14 @@ impl ModifierState {
         self.alt = state.alt_key();
         self.super_key = state.super_key();
     }
+    
+    /// Updates modifier state from a ModifiersState directly
+    pub fn update_from_state(&mut self, state: winit::keyboard::ModifiersState) {
+        self.shift = state.shift_key();
+        self.ctrl = state.control_key();
+        self.alt = state.alt_key();
+        self.super_key = state.super_key();
+    }
 
     /// Returns the modifier number for escape sequences (1-8)
     /// Bit positions: Shift(1), Alt(2), Ctrl(4), Super(8) - but typically 1-8
@@ -373,6 +381,11 @@ impl InputHandler {
         };
 
         TerminalInput::Escape(escape)
+    }
+
+    /// Get a mutable reference to the modifier state
+    pub fn modifiers_mut(&mut self) -> &mut ModifierState {
+        &mut self.modifiers
     }
 
     /// Get the current modifier state
