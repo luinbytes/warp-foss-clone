@@ -1,0 +1,738 @@
+//! ANSI escape sequence parser using the `vte` crate.
+//!
+//! This module provides terminal parsing capabilities for handling VT100/VT200/VT300/VT420
+//! escape sequences from PTY output.
+
+use vte::{Params, Perform};
+
+/// Represents a color (either as an index into a palette or as an RGB value).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Color {
+    /// Default terminal color (foreground or background)
+    #[default]
+    Default,
+    /// Indexed color (0-255, following XTerm 256-color palette)
+    Indexed(u8),
+    /// 24-bit RGB color
+    Rgb(u8, u8, u8),
+}
+
+/// Text attributes/style for a character cell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TextAttributes {
+    /// Bold text
+    pub bold: bool,
+    /// Dim/faint text
+    pub dim: bool,
+    /// Italic text
+    pub italic: bool,
+    /// Underlined text
+    pub underline: bool,
+    /// Blinking text
+    pub blink: bool,
+    /// Reverse video (swap foreground/background)
+    pub reverse: bool,
+    /// Hidden/invisible text
+    pub hidden: bool,
+    /// Strikethrough text
+    pub strikethrough: bool,
+}
+
+impl TextAttributes {
+    /// Reset all attributes to default.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// Cursor position in the terminal grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CursorPosition {
+    /// 0-indexed row
+    pub row: usize,
+    /// 0-indexed column
+    pub col: usize,
+}
+
+/// Represents a parsed terminal output cell.
+#[derive(Debug, Clone)]
+pub struct TerminalCell {
+    /// Character content
+    pub char: char,
+    /// Foreground color
+    pub fg_color: Color,
+    /// Background color
+    pub bg_color: Color,
+    /// Text attributes
+    pub attributes: TextAttributes,
+}
+
+impl Default for TerminalCell {
+    fn default() -> Self {
+        Self {
+            char: ' ',
+            fg_color: Color::Default,
+            bg_color: Color::Default,
+            attributes: TextAttributes::default(),
+        }
+    }
+}
+
+/// State tracked by the terminal parser.
+#[derive(Debug, Clone)]
+pub struct ParserState {
+    /// Current cursor position
+    pub cursor: CursorPosition,
+    /// Current text attributes
+    pub attributes: TextAttributes,
+    /// Current foreground color
+    pub fg_color: Color,
+    /// Current background color
+    pub bg_color: Color,
+    /// Whether cursor is visible
+    pub cursor_visible: bool,
+    /// Saved cursor position (for save/restore)
+    pub saved_cursor: CursorPosition,
+    /// Saved attributes (for save/restore)
+    pub saved_attributes: TextAttributes,
+}
+
+impl Default for ParserState {
+    fn default() -> Self {
+        Self {
+            cursor: CursorPosition::default(),
+            attributes: TextAttributes::default(),
+            fg_color: Color::Default,
+            bg_color: Color::Default,
+            cursor_visible: true,
+            saved_cursor: CursorPosition::default(),
+            saved_attributes: TextAttributes::default(),
+        }
+    }
+}
+
+/// Terminal parser that processes ANSI escape sequences.
+///
+/// This parser uses the `vte` crate to handle escape sequence parsing and
+/// maintains the terminal state including cursor position, colors, and text attributes.
+pub struct TerminalParser {
+    /// The underlying VTE parser
+    parser: vte::Parser,
+    /// Current parser state
+    pub state: ParserState,
+    /// Processed output buffer (for rendered content)
+    output_buffer: Vec<TerminalCell>,
+    /// Number of columns in the terminal
+    cols: usize,
+    /// Number of rows in the terminal
+    rows: usize,
+}
+
+impl TerminalParser {
+    /// Create a new terminal parser with default dimensions.
+    pub fn new() -> Self {
+        Self::with_size(80, 24)
+    }
+
+    /// Create a new terminal parser with specified dimensions.
+    ///
+    /// # Arguments
+    /// * `cols` - Number of columns (width)
+    /// * `rows` - Number of rows (height)
+    pub fn with_size(cols: usize, rows: usize) -> Self {
+        Self {
+            parser: vte::Parser::new(),
+            state: ParserState::default(),
+            output_buffer: vec![TerminalCell::default(); cols * rows],
+            cols,
+            rows,
+        }
+    }
+
+    /// Parse a slice of bytes from the PTY.
+    ///
+    /// This method processes the raw bytes and updates the parser state.
+    /// The bytes are interpreted as UTF-8 text with embedded escape sequences.
+    pub fn parse_bytes(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.parser.advance(&mut self.state, *byte);
+        }
+    }
+
+    /// Get the current cursor position.
+    pub fn cursor_position(&self) -> CursorPosition {
+        self.state.cursor
+    }
+
+    /// Get the current text attributes.
+    pub fn attributes(&self) -> TextAttributes {
+        self.state.attributes
+    }
+
+    /// Get the current foreground color.
+    pub fn foreground_color(&self) -> Color {
+        self.state.fg_color
+    }
+
+    /// Get the current background color.
+    pub fn background_color(&self) -> Color {
+        self.state.bg_color
+    }
+
+    /// Resize the terminal.
+    pub fn resize(&mut self, cols: usize, rows: usize) {
+        self.cols = cols;
+        self.rows = rows;
+        self.output_buffer.resize(cols * rows, TerminalCell::default());
+    }
+
+    /// Get the output buffer.
+    pub fn output(&self) -> &[TerminalCell] {
+        &self.output_buffer
+    }
+
+    /// Clear the screen.
+    pub fn clear_screen(&mut self) {
+        self.output_buffer.fill(TerminalCell::default());
+    }
+
+    /// Put a character at the current cursor position.
+    fn put_char(&mut self, c: char) {
+        let row = self.state.cursor.row;
+        let col = self.state.cursor.col;
+
+        if row < self.rows && col < self.cols {
+            let idx = row * self.cols + col;
+            if idx < self.output_buffer.len() {
+                let cell = &mut self.output_buffer[idx];
+                cell.char = c;
+                cell.fg_color = self.state.fg_color;
+                cell.bg_color = self.state.bg_color;
+                cell.attributes = self.state.attributes;
+            }
+        }
+
+        // Advance cursor
+        if self.state.cursor.col < self.cols - 1 {
+            self.state.cursor.col += 1;
+        }
+    }
+
+    /// Parse a color from SGR parameters.
+    fn parse_color(params: &Params, start_idx: usize) -> Option<Color> {
+        let iter: Vec<u16> = params.iter().skip(start_idx).flat_map(|p| p.iter().copied()).collect();
+
+        if iter.is_empty() {
+            return None;
+        }
+
+        match iter[0] {
+            5 => {
+                // 256-color mode: ESC[ ... 5 ; <n> m
+                if iter.len() > 1 {
+                    Some(Color::Indexed(iter[1] as u8))
+                } else {
+                    None
+                }
+            }
+            2 => {
+                // 24-bit color mode: ESC[ ... 2 ; <r> ; <g> ; <b> m
+                if iter.len() > 3 {
+                    Some(Color::Rgb(iter[1] as u8, iter[2] as u8, iter[3] as u8))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+impl Default for TerminalParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Implementation of the `Perform` trait from `vte` to handle escape sequences.
+impl Perform for ParserState {
+    /// Handle a printable character.
+    fn print(&mut self, c: char) {
+        // This is called by the parser, but we handle it differently
+        // in TerminalParser - the state just tracks attributes
+        let _ = c;
+    }
+
+    /// Handle a C0 or C1 control character.
+    fn execute(&mut self, byte: u8) {
+        match byte {
+            0x08 => {
+                // BS - Backspace
+                if self.cursor.col > 0 {
+                    self.cursor.col -= 1;
+                }
+            }
+            0x09 => {
+                // HT - Horizontal Tab (move to next tab stop, every 8 columns)
+                self.cursor.col = (self.cursor.col + 8) & !7;
+            }
+            0x0A | 0x0B | 0x0C => {
+                // LF, VT, FF - Line Feed (move down, possibly scroll)
+                self.cursor.row += 1;
+                // Note: Scrolling would be handled here in a full implementation
+            }
+            0x0D => {
+                // CR - Carriage Return (move to column 0)
+                self.cursor.col = 0;
+            }
+            0x1B => {
+                // ESC - Escape (start of escape sequence)
+            }
+            _ => {
+                // Other control characters are ignored
+            }
+        }
+    }
+
+    /// Handle the end of a CSI escape sequence.
+    fn hook(&mut self, _params: &Params, _intermediates: &[u8], _ignore: bool, _action: char) {
+        // DCS (Device Control String) - not commonly used
+    }
+
+    /// Handle a character in a DCS sequence.
+    fn put(&mut self, _byte: u8) {
+        // Part of DCS handling
+    }
+
+    /// Handle the end of a DCS sequence.
+    fn unhook(&mut self) {
+        // End of DCS
+    }
+
+    /// Handle an OSC escape sequence (Operating System Command).
+    fn osc_dispatch(&mut self, _params: &[&[u8]], _bell_terminated: bool) {
+        // OSC sequences for window titles, clipboard, etc.
+        // Example: ESC ] 0 ; title BEL
+    }
+
+    /// Handle a CSI escape sequence.
+    fn csi_dispatch(&mut self, params: &Params, _intermediates: &[u8], _ignore: bool, action: char) {
+        let params_vec: Vec<Vec<u16>> = params.iter().map(|p| p.iter().copied().collect()).collect();
+        let flat_params: Vec<u16> = params_vec.iter().flat_map(|p| p.iter().copied()).collect();
+
+        match action {
+            'A' => {
+                // CUU - Cursor Up
+                let n = flat_params.first().copied().unwrap_or(1) as usize;
+                self.cursor.row = self.cursor.row.saturating_sub(n);
+            }
+            'B' => {
+                // CUD - Cursor Down
+                let n = flat_params.first().copied().unwrap_or(1) as usize;
+                self.cursor.row += n;
+            }
+            'C' => {
+                // CUF - Cursor Forward (Right)
+                let n = flat_params.first().copied().unwrap_or(1) as usize;
+                self.cursor.col += n;
+            }
+            'D' => {
+                // CUB - Cursor Back (Left)
+                let n = flat_params.first().copied().unwrap_or(1) as usize;
+                self.cursor.col = self.cursor.col.saturating_sub(n);
+            }
+            'E' => {
+                // CNL - Cursor Next Line
+                let n = flat_params.first().copied().unwrap_or(1) as usize;
+                self.cursor.row += n;
+                self.cursor.col = 0;
+            }
+            'F' => {
+                // CPL - Cursor Previous Line
+                let n = flat_params.first().copied().unwrap_or(1) as usize;
+                self.cursor.row = self.cursor.row.saturating_sub(n);
+                self.cursor.col = 0;
+            }
+            'G' => {
+                // CHA - Cursor Horizontal Absolute
+                let n = flat_params.first().copied().unwrap_or(1) as usize;
+                self.cursor.col = n.saturating_sub(1); // 1-indexed to 0-indexed
+            }
+            'H' | 'f' => {
+                // CUP - Cursor Position (row; col)
+                let row = flat_params.first().copied().unwrap_or(1) as usize;
+                let col = flat_params.get(1).copied().unwrap_or(1) as usize;
+                self.cursor.row = row.saturating_sub(1);
+                self.cursor.col = col.saturating_sub(1);
+            }
+            'J' => {
+                // ED - Erase in Display
+                let mode = flat_params.first().copied().unwrap_or(0);
+                match mode {
+                    0 => {
+                        // Erase from cursor to end of screen
+                        // In a full implementation, this would clear cells
+                    }
+                    1 => {
+                        // Erase from start of screen to cursor
+                    }
+                    2 | 3 => {
+                        // Erase entire screen (and scrollback for 3)
+                        self.cursor.row = 0;
+                        self.cursor.col = 0;
+                    }
+                    _ => {}
+                }
+            }
+            'K' => {
+                // EL - Erase in Line
+                let mode = flat_params.first().copied().unwrap_or(0);
+                match mode {
+                    0 => {
+                        // Erase from cursor to end of line
+                    }
+                    1 => {
+                        // Erase from start of line to cursor
+                    }
+                    2 => {
+                        // Erase entire line
+                    }
+                    _ => {}
+                }
+            }
+            'm' => {
+                // SGR - Select Graphic Rendition
+                if flat_params.is_empty() {
+                    // Reset all attributes
+                    self.attributes.reset();
+                    self.fg_color = Color::Default;
+                    self.bg_color = Color::Default;
+                } else {
+                    let mut i = 0;
+                    while i < flat_params.len() {
+                        match flat_params[i] {
+                            0 => {
+                                // Reset
+                                self.attributes.reset();
+                                self.fg_color = Color::Default;
+                                self.bg_color = Color::Default;
+                            }
+                            1 => self.attributes.bold = true,
+                            2 => self.attributes.dim = true,
+                            3 => self.attributes.italic = true,
+                            4 => self.attributes.underline = true,
+                            5 => self.attributes.blink = true,
+                            7 => self.attributes.reverse = true,
+                            8 => self.attributes.hidden = true,
+                            9 => self.attributes.strikethrough = true,
+                            22 => {
+                                self.attributes.bold = false;
+                                self.attributes.dim = false;
+                            }
+                            23 => self.attributes.italic = false,
+                            24 => self.attributes.underline = false,
+                            25 => self.attributes.blink = false,
+                            27 => self.attributes.reverse = false,
+                            28 => self.attributes.hidden = false,
+                            29 => self.attributes.strikethrough = false,
+                            30..=37 => {
+                                // Standard foreground colors (3-bit)
+                                self.fg_color = Color::Indexed((flat_params[i] - 30) as u8);
+                            }
+                            38 => {
+                                // Extended foreground color
+                                if i + 1 < flat_params.len() {
+                                    match flat_params[i + 1] {
+                                        5 => {
+                                            // 256-color
+                                            if i + 2 < flat_params.len() {
+                                                self.fg_color = Color::Indexed(flat_params[i + 2] as u8);
+                                                i += 2;
+                                            }
+                                        }
+                                        2 => {
+                                            // 24-bit color
+                                            if i + 4 < flat_params.len() {
+                                                self.fg_color = Color::Rgb(
+                                                    flat_params[i + 2] as u8,
+                                                    flat_params[i + 3] as u8,
+                                                    flat_params[i + 4] as u8,
+                                                );
+                                                i += 4;
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            39 => self.fg_color = Color::Default,
+                            40..=47 => {
+                                // Standard background colors (3-bit)
+                                self.bg_color = Color::Indexed((flat_params[i] - 40) as u8);
+                            }
+                            48 => {
+                                // Extended background color
+                                if i + 1 < flat_params.len() {
+                                    match flat_params[i + 1] {
+                                        5 => {
+                                            // 256-color
+                                            if i + 2 < flat_params.len() {
+                                                self.bg_color = Color::Indexed(flat_params[i + 2] as u8);
+                                                i += 2;
+                                            }
+                                        }
+                                        2 => {
+                                            // 24-bit color
+                                            if i + 4 < flat_params.len() {
+                                                self.bg_color = Color::Rgb(
+                                                    flat_params[i + 2] as u8,
+                                                    flat_params[i + 3] as u8,
+                                                    flat_params[i + 4] as u8,
+                                                );
+                                                i += 4;
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            49 => self.bg_color = Color::Default,
+                            90..=97 => {
+                                // Bright foreground colors
+                                self.fg_color = Color::Indexed((flat_params[i] - 90 + 8) as u8);
+                            }
+                            100..=107 => {
+                                // Bright background colors
+                                self.bg_color = Color::Indexed((flat_params[i] - 100 + 8) as u8);
+                            }
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                }
+            }
+            's' => {
+                // SCP - Save Cursor Position
+                self.saved_cursor = self.cursor;
+                self.saved_attributes = self.attributes;
+            }
+            'u' => {
+                // RCP - Restore Cursor Position
+                self.cursor = self.saved_cursor;
+                self.attributes = self.saved_attributes;
+            }
+            'l' | 'h' => {
+                // SM/RM - Set/Reset Mode
+                // Handle cursor visibility (DECTCEM): ?25l / ?25h
+                // Note: '?' prefix handling would be in intermediates
+            }
+            _ => {
+                // Unknown CSI sequence
+            }
+        }
+    }
+
+    /// Handle an ESC escape sequence.
+    fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, byte: u8) {
+        match byte {
+            b'c' => {
+                // RIS - Reset to Initial State
+                self.cursor = CursorPosition::default();
+                self.attributes = TextAttributes::default();
+                self.fg_color = Color::Default;
+                self.bg_color = Color::Default;
+            }
+            b'M' => {
+                // RI - Reverse Index (move up, scroll if needed)
+                if self.cursor.row > 0 {
+                    self.cursor.row -= 1;
+                }
+            }
+            b'D' => {
+                // IND - Index (move down, scroll if needed)
+                self.cursor.row += 1;
+            }
+            b'E' => {
+                // NEL - Next Line
+                self.cursor.row += 1;
+                self.cursor.col = 0;
+            }
+            b'7' => {
+                // DECSC - Save Cursor
+                self.saved_cursor = self.cursor;
+                self.saved_attributes = self.attributes;
+            }
+            b'8' => {
+                // DECRC - Restore Cursor
+                self.cursor = self.saved_cursor;
+                self.attributes = self.saved_attributes;
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parser_creation() {
+        let parser = TerminalParser::new();
+        assert_eq!(parser.cursor_position().row, 0);
+        assert_eq!(parser.cursor_position().col, 0);
+    }
+
+    #[test]
+    fn test_parser_with_size() {
+        let parser = TerminalParser::with_size(120, 40);
+        assert_eq!(parser.output().len(), 120 * 40);
+    }
+
+    #[test]
+    fn test_cursor_movement() {
+        let mut parser = TerminalParser::new();
+
+        // Test cursor position
+        assert_eq!(parser.cursor_position(), CursorPosition { row: 0, col: 0 });
+
+        // Move cursor down (CSI B)
+        parser.parse_bytes(b"\x1B[5B");
+        assert_eq!(parser.cursor_position().row, 5);
+
+        // Move cursor right (CSI C)
+        parser.parse_bytes(b"\x1B[10C");
+        assert_eq!(parser.cursor_position().col, 10);
+
+        // Move cursor to position (CSI H)
+        parser.parse_bytes(b"\x1B[5;10H");
+        assert_eq!(parser.cursor_position().row, 4); // 1-indexed to 0-indexed
+        assert_eq!(parser.cursor_position().col, 9);
+    }
+
+    #[test]
+    fn test_text_attributes() {
+        let mut parser = TerminalParser::new();
+
+        // Enable bold (CSI 1 m)
+        parser.parse_bytes(b"\x1B[1m");
+        assert!(parser.attributes().bold);
+
+        // Enable italic (CSI 3 m)
+        parser.parse_bytes(b"\x1B[3m");
+        assert!(parser.attributes().italic);
+
+        // Reset all (CSI 0 m)
+        parser.parse_bytes(b"\x1B[0m");
+        assert!(!parser.attributes().bold);
+        assert!(!parser.attributes().italic);
+    }
+
+    #[test]
+    fn test_colors() {
+        let mut parser = TerminalParser::new();
+
+        // Set foreground to red (CSI 31 m)
+        parser.parse_bytes(b"\x1B[31m");
+        assert_eq!(parser.foreground_color(), Color::Indexed(1));
+
+        // Set foreground to default (CSI 39 m)
+        parser.parse_bytes(b"\x1B[39m");
+        assert_eq!(parser.foreground_color(), Color::Default);
+
+        // Set 256-color foreground (CSI 38;5;<n> m)
+        parser.parse_bytes(b"\x1B[38;5;200m");
+        assert_eq!(parser.foreground_color(), Color::Indexed(200));
+
+        // Set 24-bit RGB foreground (CSI 38;2;<r>;<g>;<b> m)
+        parser.parse_bytes(b"\x1B[38;2;255;128;64m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(255, 128, 64));
+    }
+
+    #[test]
+    fn test_control_characters() {
+        let mut parser = TerminalParser::new();
+
+        // Start at position 5,5
+        parser.state.cursor.row = 5;
+        parser.state.cursor.col = 5;
+
+        // Carriage return
+        parser.parse_bytes(b"\r");
+        assert_eq!(parser.cursor_position().col, 0);
+        assert_eq!(parser.cursor_position().row, 5);
+
+        // Reset and test backspace
+        parser.state.cursor.col = 5;
+        parser.parse_bytes(b"\x08");
+        assert_eq!(parser.cursor_position().col, 4);
+
+        // Reset and test tab
+        parser.state.cursor.col = 5;
+        parser.parse_bytes(b"\t");
+        assert_eq!(parser.cursor_position().col, 8); // Next tab stop
+
+        // Test line feed
+        parser.parse_bytes(b"\n");
+        assert_eq!(parser.cursor_position().row, 6);
+    }
+
+    #[test]
+    fn test_save_restore_cursor() {
+        let mut parser = TerminalParser::new();
+
+        // Set position
+        parser.state.cursor.row = 10;
+        parser.state.cursor.col = 20;
+
+        // Save cursor (CSI s)
+        parser.parse_bytes(b"\x1B[s");
+
+        // Move cursor
+        parser.parse_bytes(b"\x1B[1;1H");
+        assert_eq!(parser.cursor_position().row, 0);
+        assert_eq!(parser.cursor_position().col, 0);
+
+        // Restore cursor (CSI u)
+        parser.parse_bytes(b"\x1B[u");
+        assert_eq!(parser.cursor_position().row, 10);
+        assert_eq!(parser.cursor_position().col, 20);
+    }
+
+    #[test]
+    fn test_esc_save_restore() {
+        let mut parser = TerminalParser::new();
+
+        // Set position and attributes
+        parser.state.cursor.row = 5;
+        parser.state.cursor.col = 10;
+        parser.state.attributes.bold = true;
+
+        // Save cursor (ESC 7)
+        parser.parse_bytes(b"\x1B7");
+
+        // Reset
+        parser.parse_bytes(b"\x1B[0m");
+        parser.state.cursor.row = 0;
+        parser.state.cursor.col = 0;
+
+        // Restore cursor (ESC 8)
+        parser.parse_bytes(b"\x1B8");
+
+        assert_eq!(parser.cursor_position().row, 5);
+        assert_eq!(parser.cursor_position().col, 10);
+    }
+
+    #[test]
+    fn test_combined_sequences() {
+        let mut parser = TerminalParser::new();
+
+        // Complex sequence: bold, red fg, move to row 10, col 20
+        parser.parse_bytes(b"\x1B[1;31m\x1B[10;20H");
+
+        assert!(parser.attributes().bold);
+        assert_eq!(parser.foreground_color(), Color::Indexed(1)); // Red
+        assert_eq!(parser.cursor_position().row, 9);
+        assert_eq!(parser.cursor_position().col, 19);
+    }
+}
