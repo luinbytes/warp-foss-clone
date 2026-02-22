@@ -3,6 +3,8 @@
 //! This module provides a 2D grid representation of terminal content,
 //! including character data, colors, text attributes, and scrollback history.
 
+use std::fmt;
+
 use super::parser::{Color, TextAttributes, TerminalOutput};
 
 /// A single cell in the terminal grid.
@@ -541,15 +543,6 @@ impl TerminalGrid {
         self.grid[row].iter().map(|cell| cell.char).collect()
     }
 
-    /// Get the entire visible content as a string.
-    pub fn to_string(&self) -> String {
-        self.grid
-            .iter()
-            .map(|row| row.iter().map(|cell| cell.char).collect::<String>())
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     /// Save the current cursor position and attributes.
     pub fn save_cursor(&mut self) -> (Cursor, TextAttributes, Color, Color) {
         (
@@ -581,6 +574,17 @@ impl TerminalGrid {
 impl Default for TerminalGrid {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl fmt::Display for TerminalGrid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let content: String = self.grid
+            .iter()
+            .map(|row| row.iter().map(|cell| cell.char).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        write!(f, "{}", content)
     }
 }
 
