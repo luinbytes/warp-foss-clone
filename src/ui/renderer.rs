@@ -6,7 +6,7 @@
 #![allow(dead_code)]
 
 use thiserror::Error;
-use wgpu::{Device, Queue, Surface, SurfaceConfiguration, TextureViewDescriptor};
+use wgpu::{Device, PresentMode, Queue, Surface, SurfaceConfiguration, TextureViewDescriptor};
 use winit::window::Window;
 
 use crate::terminal::grid::TerminalGrid;
@@ -107,7 +107,7 @@ impl<'window> Renderer<'window> {
             format: surface_format,
             width: size.width,
             height: size.height,
-            present_mode: surface_caps.present_modes[0],
+            present_mode: PresentMode::Fifo, // Use Fifo (vsync) for maximum cross-platform compatibility
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
