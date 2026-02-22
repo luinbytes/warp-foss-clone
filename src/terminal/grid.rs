@@ -1,0 +1,1039 @@
+//! Terminal screen buffer (grid) for storing and manipulating terminal cell data.
+//!
+//! This module provides a 2D grid representation of terminal content,
+//! including character data, colors, text attributes, and scrollback history.
+
+use super::parser::{Color, TextAttributes};
+
+/// A single cell in the terminal grid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cell {
+    /// The character displayed in this cell.
+    pub char: char,
+    /// Foreground color.
+    pub fg_color: Color,
+    /// Background color.
+    pub bg_color: Color,
+    /// Text attributes (bold, underline, etc.).
+    pub attributes: TextAttributes,
+}
+
+impl Default for Cell {
+    fn default() -> Self {
+        Self {
+            char: ' ',
+            fg_color: Color::Default,
+            bg_color: Color::Default,
+            attributes: TextAttributes::default(),
+        }
+    }
+}
+
+impl Cell {
+    /// Create a new cell with the given character.
+    pub fn new(char: char) -> Self {
+        Self {
+            char,
+            ..Self::default()
+        }
+    }
+
+    /// Create a new cell with character and colors.
+    pub fn with_colors(char: char, fg_color: Color, bg_color: Color) -> Self {
+        Self {
+            char,
+            fg_color,
+            bg_color,
+            attributes: TextAttributes::default(),
+        }
+    }
+
+    /// Create a fully specified cell.
+    pub fn with_attributes(
+        char: char,
+        fg_color: Color,
+        bg_color: Color,
+        attributes: TextAttributes,
+    ) -> Self {
+        Self {
+            char,
+            fg_color,
+            bg_color,
+            attributes,
+        }
+    }
+
+    /// Check if this cell is empty (space with default colors and attributes).
+    pub fn is_empty(&self) -> bool {
+        self.char == ' '
+            && self.fg_color == Color::Default
+            && self.bg_color == Color::Default
+            && self.attributes == TextAttributes::default()
+    }
+
+    /// Reset the cell to default state.
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+/// Cursor position in the terminal grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Cursor {
+    /// 0-indexed row.
+    pub row: usize,
+    /// 0-indexed column.
+    pub col: usize,
+}
+
+impl Cursor {
+    /// Create a new cursor at the given position.
+    pub fn new(row: usize, col: usize) -> Self {
+        Self { row, col }
+    }
+
+    /// Create a cursor at the origin (0, 0).
+    pub fn origin() -> Self {
+        Self::default()
+    }
+}
+
+/// A row in the scrollback buffer.
+type ScrollbackRow = Vec<Cell>;
+
+/// Terminal screen buffer with scrollback history.
+///
+/// This struct manages a 2D grid of cells representing the visible terminal
+/// content, plus an optional scrollback buffer for history.
+#[derive(Debug, Clone)]
+pub struct TerminalGrid {
+    /// The visible grid of cells (rows × cols).
+    grid: Vec<Vec<Cell>>,
+    /// Number of columns (width).
+    cols: usize,
+    /// Number of rows (height).
+    rows: usize,
+    /// Current cursor position.
+    cursor: Cursor,
+    /// Scrollback buffer (lines that have scrolled off the top).
+    scrollback: Vec<ScrollbackRow>,
+    /// Maximum number of scrollback lines to keep.
+    max_scrollback: usize,
+    /// Current text attributes for new characters.
+    attributes: TextAttributes,
+    /// Current foreground color.
+    fg_color: Color,
+    /// Current background color.
+    bg_color: Color,
+}
+
+impl TerminalGrid {
+    /// Create a new terminal grid with default dimensions (80×24).
+    pub fn new() -> Self {
+        Self::with_size(80, 24)
+    }
+
+    /// Create a new terminal grid with specified dimensions.
+    ///
+    /// # Arguments
+    /// * `cols` - Number of columns (width).
+    /// * `rows` - Number of rows (height).
+    pub fn with_size(cols: usize, rows: usize) -> Self {
+        Self {
+            grid: vec![vec![Cell::default(); cols]; rows],
+            cols,
+            rows,
+            cursor: Cursor::default(),
+            scrollback: Vec::new(),
+            max_scrollback: 10000,
+            attributes: TextAttributes::default(),
+            fg_color: Color::Default,
+            bg_color: Color::Default,
+        }
+    }
+
+    /// Create a terminal grid with custom scrollback size.
+    ///
+    /// # Arguments
+    /// * `cols` - Number of columns (width).
+    /// * `rows` - Number of rows (height).
+    /// * `max_scrollback` - Maximum scrollback lines to retain.
+    pub fn with_scrollback(cols: usize, rows: usize, max_scrollback: usize) -> Self {
+        Self {
+            grid: vec![vec![Cell::default(); cols]; rows],
+            cols,
+            rows,
+            cursor: Cursor::default(),
+            scrollback: Vec::new(),
+            max_scrollback,
+            attributes: TextAttributes::default(),
+            fg_color: Color::Default,
+            bg_color: Color::Default,
+        }
+    }
+
+    /// Get the number of columns.
+    pub fn cols(&self) -> usize {
+        self.cols
+    }
+
+    /// Get the number of rows.
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
+    /// Get the current cursor position.
+    pub fn cursor(&self) -> Cursor {
+        self.cursor
+    }
+
+    /// Get the number of scrollback lines.
+    pub fn scrollback_len(&self) -> usize {
+        self.scrollback.len()
+    }
+
+    /// Set the current text attributes.
+    pub fn set_attributes(&mut self, attributes: TextAttributes) {
+        self.attributes = attributes;
+    }
+
+    /// Get the current text attributes.
+    pub fn attributes(&self) -> TextAttributes {
+        self.attributes
+    }
+
+    /// Set the current foreground color.
+    pub fn set_foreground(&mut self, color: Color) {
+        self.fg_color = color;
+    }
+
+    /// Set the current background color.
+    pub fn set_background(&mut self, color: Color) {
+        self.bg_color = color;
+    }
+
+    /// Move the cursor to a specific position.
+    ///
+    /// The position is clamped to valid grid coordinates.
+    pub fn move_cursor(&mut self, row: usize, col: usize) {
+        self.cursor.row = row.min(self.rows.saturating_sub(1));
+        self.cursor.col = col.min(self.cols.saturating_sub(1));
+    }
+
+    /// Move the cursor relative to its current position.
+    pub fn move_cursor_relative(&mut self, row_delta: isize, col_delta: isize) {
+        if row_delta < 0 {
+            self.cursor.row = self.cursor.row.saturating_sub(row_delta.unsigned_abs());
+        } else {
+            self.cursor.row = (self.cursor.row + row_delta as usize).min(self.rows.saturating_sub(1));
+        }
+
+        if col_delta < 0 {
+            self.cursor.col = self.cursor.col.saturating_sub(col_delta.unsigned_abs());
+        } else {
+            self.cursor.col = (self.cursor.col + col_delta as usize).min(self.cols.saturating_sub(1));
+        }
+    }
+
+    /// Put a character at the current cursor position and advance the cursor.
+    ///
+    /// If at the end of a line (cursor past last column), this wraps to the next line first.
+    /// If at the bottom of the screen, this scrolls up.
+    pub fn put_char(&mut self, c: char) {
+        // Handle pending wrap (cursor past last column)
+        if self.cursor.col >= self.cols {
+            self.cursor.col = 0;
+            self.cursor.row += 1;
+
+            // Scroll if needed
+            if self.cursor.row >= self.rows {
+                self.scroll_up(1);
+                self.cursor.row = self.rows - 1;
+            }
+        }
+
+        // Write the character at current cursor position
+        if self.cursor.row < self.rows && self.cursor.col < self.cols {
+            let cell = &mut self.grid[self.cursor.row][self.cursor.col];
+            cell.char = c;
+            cell.fg_color = self.fg_color;
+            cell.bg_color = self.bg_color;
+            cell.attributes = self.attributes;
+        }
+
+        // Advance cursor
+        self.cursor.col += 1;
+    }
+
+    /// Put a character without advancing the cursor.
+    pub fn put_char_at(&mut self, row: usize, col: usize, c: char) {
+        if row < self.rows && col < self.cols {
+            let cell = &mut self.grid[row][col];
+            cell.char = c;
+            cell.fg_color = self.fg_color;
+            cell.bg_color = self.bg_color;
+            cell.attributes = self.attributes;
+        }
+    }
+
+    /// Get a cell at the given position.
+    ///
+    /// Returns None if the position is out of bounds.
+    pub fn get_cell(&self, row: usize, col: usize) -> Option<&Cell> {
+        self.grid.get(row)?.get(col)
+    }
+
+    /// Get a mutable reference to a cell at the given position.
+    pub fn get_cell_mut(&mut self, row: usize, col: usize) -> Option<&mut Cell> {
+        self.grid.get_mut(row)?.get_mut(col)
+    }
+
+    /// Get a reference to a row.
+    pub fn get_row(&self, row: usize) -> Option<&[Cell]> {
+        self.grid.get(row).map(|r| r.as_slice())
+    }
+
+    /// Resize the terminal grid.
+    ///
+    /// Content is preserved where possible. New cells are initialized to default.
+    pub fn resize(&mut self, new_cols: usize, new_rows: usize) {
+        // Resize each row
+        for row in &mut self.grid {
+            row.resize(new_cols, Cell::default());
+        }
+
+        // Add or remove rows
+        self.grid.resize(new_rows, vec![Cell::default(); new_cols]);
+
+        self.cols = new_cols;
+        self.rows = new_rows;
+
+        // Clamp cursor to new dimensions
+        self.cursor.row = self.cursor.row.min(self.rows.saturating_sub(1));
+        self.cursor.col = self.cursor.col.min(self.cols.saturating_sub(1));
+    }
+
+    /// Clear the entire screen, filling with default cells.
+    pub fn clear_screen(&mut self) {
+        for row in &mut self.grid {
+            for cell in row {
+                cell.reset();
+            }
+        }
+        // Also clear scrollback when clearing screen
+        self.scrollback.clear();
+    }
+
+    /// Clear the screen but preserve scrollback.
+    pub fn clear_screen_keep_scrollback(&mut self) {
+        for row in &mut self.grid {
+            for cell in row {
+                cell.reset();
+            }
+        }
+    }
+
+    /// Clear from cursor to end of screen.
+    pub fn clear_to_end_of_screen(&mut self) {
+        // Clear from cursor to end of current line
+        self.clear_to_end_of_line();
+
+        // Clear all lines below
+        for row_idx in (self.cursor.row + 1)..self.rows {
+            for cell in &mut self.grid[row_idx] {
+                cell.reset();
+            }
+        }
+    }
+
+    /// Clear from start of screen to cursor.
+    pub fn clear_to_start_of_screen(&mut self) {
+        // Clear all lines above
+        for row_idx in 0..self.cursor.row {
+            for cell in &mut self.grid[row_idx] {
+                cell.reset();
+            }
+        }
+
+        // Clear from start of current line to cursor
+        self.clear_to_start_of_line();
+    }
+
+    /// Clear the current line.
+    pub fn clear_line(&mut self) {
+        if self.cursor.row < self.rows {
+            for cell in &mut self.grid[self.cursor.row] {
+                cell.reset();
+            }
+        }
+    }
+
+    /// Clear from cursor to end of the current line.
+    pub fn clear_to_end_of_line(&mut self) {
+        if self.cursor.row < self.rows {
+            for col_idx in self.cursor.col..self.cols {
+                self.grid[self.cursor.row][col_idx].reset();
+            }
+        }
+    }
+
+    /// Clear from start of the current line to cursor.
+    pub fn clear_to_start_of_line(&mut self) {
+        if self.cursor.row < self.rows {
+            for col_idx in 0..=self.cursor.col.min(self.cols - 1) {
+                self.grid[self.cursor.row][col_idx].reset();
+            }
+        }
+    }
+
+    /// Scroll the screen up by n lines.
+    ///
+    /// Lines that scroll off the top are moved to the scrollback buffer.
+    /// Note: This does NOT adjust the cursor position - callers must do that if needed.
+    pub fn scroll_up(&mut self, n: usize) {
+        if n == 0 || self.rows == 0 {
+            return;
+        }
+
+        let scroll_amount = n.min(self.rows);
+
+        // Move scrolled lines to scrollback
+        for i in 0..scroll_amount {
+            if self.scrollback.len() >= self.max_scrollback {
+                self.scrollback.remove(0);
+            }
+            // Clone the row before it gets replaced
+            let row = self.grid[i].clone();
+            self.scrollback.push(row);
+        }
+
+        // Shift rows up
+        self.grid.drain(0..scroll_amount);
+
+        // Add new empty rows at the bottom
+        for _ in 0..scroll_amount {
+            self.grid.push(vec![Cell::default(); self.cols]);
+        }
+    }
+
+    /// Scroll the screen down by n lines.
+    ///
+    /// This is the opposite of scroll_up - new lines appear at the top.
+    pub fn scroll_down(&mut self, n: usize) {
+        if n == 0 || self.rows == 0 {
+            return;
+        }
+
+        let scroll_amount = n.min(self.rows);
+
+        // Remove rows from the bottom
+        let rows_to_remove = self.rows.saturating_sub(scroll_amount);
+        self.grid.drain(rows_to_remove..);
+
+        // Add new empty rows at the top
+        for _ in 0..scroll_amount {
+            self.grid.insert(0, vec![Cell::default(); self.cols]);
+        }
+
+        // Adjust cursor position
+        self.cursor.row = (self.cursor.row + scroll_amount).min(self.rows.saturating_sub(1));
+    }
+
+    /// Insert n blank lines at the cursor position.
+    ///
+    /// Lines below the cursor are shifted down, and lines that fall off
+    /// the bottom are lost.
+    pub fn insert_lines(&mut self, n: usize) {
+        if self.cursor.row >= self.rows {
+            return;
+        }
+
+        let insert_count = n.min(self.rows - self.cursor.row);
+
+        // Remove lines from the bottom to make room
+        let lines_to_remove = (self.cursor.row + insert_count).saturating_sub(self.rows);
+        if lines_to_remove > 0 {
+            self.grid.drain((self.rows - lines_to_remove)..);
+        }
+
+        // Insert blank lines at cursor position
+        for _ in 0..insert_count {
+            self.grid.insert(self.cursor.row, vec![Cell::default(); self.cols]);
+        }
+
+        // Ensure we still have the right number of rows
+        self.grid.truncate(self.rows);
+    }
+
+    /// Delete n lines at the cursor position.
+    ///
+    /// Lines below the deleted lines are shifted up, and blank lines
+    /// appear at the bottom.
+    pub fn delete_lines(&mut self, n: usize) {
+        if self.cursor.row >= self.rows {
+            return;
+        }
+
+        let delete_count = n.min(self.rows - self.cursor.row);
+
+        // Remove lines at cursor position
+        self.grid.drain(self.cursor.row..(self.cursor.row + delete_count));
+
+        // Add blank lines at the bottom
+        for _ in 0..delete_count {
+            self.grid.push(vec![Cell::default(); self.cols]);
+        }
+    }
+
+    /// Perform a line feed (move cursor down, possibly scrolling).
+    pub fn linefeed(&mut self) {
+        if self.cursor.row < self.rows - 1 {
+            self.cursor.row += 1;
+        } else {
+            self.scroll_up(1);
+        }
+    }
+
+    /// Perform a carriage return (move cursor to column 0).
+    pub fn carriage_return(&mut self) {
+        self.cursor.col = 0;
+    }
+
+    /// Backspace (move cursor left by one, but not past column 0).
+    pub fn backspace(&mut self) {
+        self.cursor.col = self.cursor.col.saturating_sub(1);
+    }
+
+    /// Tab (move cursor to next tab stop, every 8 columns).
+    pub fn tab(&mut self) {
+        self.cursor.col = ((self.cursor.col / 8) + 1) * 8;
+        if self.cursor.col >= self.cols {
+            self.cursor.col = self.cols - 1;
+        }
+    }
+
+    /// Back tab (move cursor to previous tab stop).
+    pub fn back_tab(&mut self) {
+        self.cursor.col = ((self.cursor.col.saturating_sub(1)) / 8) * 8;
+    }
+
+    /// Get the entire visible grid as a slice of rows.
+    pub fn as_rows(&self) -> &[Vec<Cell>] {
+        &self.grid
+    }
+
+    /// Get the scrollback buffer.
+    pub fn scrollback(&self) -> &[ScrollbackRow] {
+        &self.scrollback
+    }
+
+    /// Clear the scrollback buffer.
+    pub fn clear_scrollback(&mut self) {
+        self.scrollback.clear();
+    }
+
+    /// Get the content of a row as a string.
+    pub fn row_to_string(&self, row: usize) -> String {
+        if row >= self.rows {
+            return String::new();
+        }
+
+        self.grid[row].iter().map(|cell| cell.char).collect()
+    }
+
+    /// Get the entire visible content as a string.
+    pub fn to_string(&self) -> String {
+        self.grid
+            .iter()
+            .map(|row| row.iter().map(|cell| cell.char).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Save the current cursor position and attributes.
+    pub fn save_cursor(&mut self) -> (Cursor, TextAttributes, Color, Color) {
+        (
+            self.cursor,
+            self.attributes,
+            self.fg_color,
+            self.bg_color,
+        )
+    }
+
+    /// Restore a previously saved cursor position and attributes.
+    pub fn restore_cursor(&mut self, saved: (Cursor, TextAttributes, Color, Color)) {
+        self.cursor = saved.0;
+        self.attributes = saved.1;
+        self.fg_color = saved.2;
+        self.bg_color = saved.3;
+    }
+
+    /// Reset the grid to initial state.
+    pub fn reset(&mut self) {
+        self.clear_screen();
+        self.cursor = Cursor::default();
+        self.attributes = TextAttributes::default();
+        self.fg_color = Color::Default;
+        self.bg_color = Color::Default;
+    }
+}
+
+impl Default for TerminalGrid {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_grid_creation() {
+        let grid = TerminalGrid::new();
+        assert_eq!(grid.cols(), 80);
+        assert_eq!(grid.rows(), 24);
+        assert_eq!(grid.cursor(), Cursor::origin());
+    }
+
+    #[test]
+    fn test_grid_with_size() {
+        let grid = TerminalGrid::with_size(120, 40);
+        assert_eq!(grid.cols(), 120);
+        assert_eq!(grid.rows(), 40);
+    }
+
+    #[test]
+    fn test_cell_default() {
+        let cell = Cell::default();
+        assert_eq!(cell.char, ' ');
+        assert_eq!(cell.fg_color, Color::Default);
+        assert_eq!(cell.bg_color, Color::Default);
+        assert!(cell.is_empty());
+    }
+
+    #[test]
+    fn test_put_char() {
+        let mut grid = TerminalGrid::with_size(10, 5);
+
+        grid.put_char('H');
+        assert_eq!(grid.cursor().col, 1);
+        assert_eq!(grid.get_cell(0, 0).unwrap().char, 'H');
+
+        grid.put_char('i');
+        assert_eq!(grid.cursor().col, 2);
+        assert_eq!(grid.get_cell(0, 1).unwrap().char, 'i');
+    }
+
+    #[test]
+    fn test_put_char_with_color() {
+        let mut grid = TerminalGrid::new();
+        grid.set_foreground(Color::Indexed(1));
+        grid.set_background(Color::Rgb(0, 0, 0));
+
+        grid.put_char('X');
+        let cell = grid.get_cell(0, 0).unwrap();
+        assert_eq!(cell.char, 'X');
+        assert_eq!(cell.fg_color, Color::Indexed(1));
+        assert_eq!(cell.bg_color, Color::Rgb(0, 0, 0));
+    }
+
+    #[test]
+    fn test_put_char_with_attributes() {
+        let mut grid = TerminalGrid::new();
+        let mut attrs = TextAttributes::default();
+        attrs.bold = true;
+        attrs.underline = true;
+        grid.set_attributes(attrs);
+
+        grid.put_char('B');
+        let cell = grid.get_cell(0, 0).unwrap();
+        assert!(cell.attributes.bold);
+        assert!(cell.attributes.underline);
+    }
+
+    #[test]
+    fn test_move_cursor() {
+        let mut grid = TerminalGrid::new();
+
+        grid.move_cursor(5, 10);
+        assert_eq!(grid.cursor().row, 5);
+        assert_eq!(grid.cursor().col, 10);
+
+        // Test clamping
+        grid.move_cursor(100, 100);
+        assert_eq!(grid.cursor().row, 23); // rows - 1
+        assert_eq!(grid.cursor().col, 79); // cols - 1
+    }
+
+    #[test]
+    fn test_move_cursor_relative() {
+        let mut grid = TerminalGrid::new();
+
+        grid.move_cursor(10, 10);
+        grid.move_cursor_relative(2, 5);
+        assert_eq!(grid.cursor().row, 12);
+        assert_eq!(grid.cursor().col, 15);
+
+        grid.move_cursor_relative(-5, -3);
+        assert_eq!(grid.cursor().row, 7);
+        assert_eq!(grid.cursor().col, 12);
+
+        // Test clamping
+        grid.move_cursor_relative(-100, -100);
+        assert_eq!(grid.cursor().row, 0);
+        assert_eq!(grid.cursor().col, 0);
+    }
+
+    #[test]
+    fn test_line_wrapping() {
+        let mut grid = TerminalGrid::with_size(5, 3);
+
+        // Write 5 characters to fill first line
+        for c in "ABCDE".chars() {
+            grid.put_char(c);
+        }
+        assert_eq!(grid.cursor().row, 0);
+        assert_eq!(grid.cursor().col, 5); // At end of line
+
+        // One more character should wrap
+        grid.put_char('F');
+        assert_eq!(grid.cursor().row, 1);
+        assert_eq!(grid.cursor().col, 1);
+
+        // Check content
+        assert_eq!(grid.row_to_string(0), "ABCDE");
+        assert_eq!(grid.get_cell(1, 0).unwrap().char, 'F');
+    }
+
+    #[test]
+    fn test_scroll_up() {
+        let mut grid = TerminalGrid::with_size(5, 3);
+
+        // Fill grid with identifiable content
+        grid.move_cursor(0, 0);
+        for c in "AAAAA".chars() {
+            grid.put_char(c);
+        }
+        grid.move_cursor(1, 0);
+        for c in "BBBBB".chars() {
+            grid.put_char(c);
+        }
+        grid.move_cursor(2, 0);
+        for c in "CCCCC".chars() {
+            grid.put_char(c);
+        }
+
+        // Scroll up 1 line
+        grid.scroll_up(1);
+
+        // Check that B is now at row 0, C at row 1, and row 2 is empty
+        assert_eq!(grid.row_to_string(0), "BBBBB");
+        assert_eq!(grid.row_to_string(1), "CCCCC");
+        assert_eq!(grid.row_to_string(2), "     ");
+
+        // Check scrollback
+        assert_eq!(grid.scrollback_len(), 1);
+        assert_eq!(grid.scrollback()[0].iter().map(|c| c.char).collect::<String>(), "AAAAA");
+    }
+
+    #[test]
+    fn test_clear_screen() {
+        let mut grid = TerminalGrid::with_size(5, 3);
+
+        // Write some content
+        grid.put_char('X');
+        grid.put_char('Y');
+        grid.put_char('Z');
+
+        grid.clear_screen();
+
+        // All cells should be empty
+        for row in grid.as_rows() {
+            for cell in row {
+                assert!(cell.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn test_clear_line() {
+        let mut grid = TerminalGrid::with_size(5, 3);
+
+        // Fill first two rows
+        grid.move_cursor(0, 0);
+        for c in "AAAAA".chars() {
+            grid.put_char(c);
+        }
+        grid.move_cursor(1, 0);
+        for c in "BBBBB".chars() {
+            grid.put_char(c);
+        }
+
+        // Clear first row
+        grid.move_cursor(0, 0);
+        grid.clear_line();
+
+        assert_eq!(grid.row_to_string(0), "     ");
+        assert_eq!(grid.row_to_string(1), "BBBBB");
+    }
+
+    #[test]
+    fn test_clear_to_end_of_line() {
+        let mut grid = TerminalGrid::with_size(5, 3);
+
+        grid.move_cursor(0, 0);
+        for c in "ABCDE".chars() {
+            grid.put_char(c);
+        }
+
+        // Clear from column 2 to end
+        grid.move_cursor(0, 2);
+        grid.clear_to_end_of_line();
+
+        assert_eq!(grid.row_to_string(0), "AB   ");
+    }
+
+    #[test]
+    fn test_resize() {
+        let mut grid = TerminalGrid::with_size(10, 5);
+
+        // Write some content
+        grid.move_cursor(0, 0);
+        for c in "ABCDEFGHIJ".chars() {
+            grid.put_char(c);
+        }
+
+        // Resize larger
+        grid.resize(15, 8);
+        assert_eq!(grid.cols(), 15);
+        assert_eq!(grid.rows(), 8);
+
+        // Original content should be preserved
+        assert_eq!(grid.row_to_string(0), "ABCDEFGHIJ     ");
+
+        // Resize smaller
+        grid.resize(5, 3);
+        assert_eq!(grid.cols(), 5);
+        assert_eq!(grid.rows(), 3);
+        assert_eq!(grid.row_to_string(0), "ABCDE");
+    }
+
+    #[test]
+    fn test_scrollback() {
+        let mut grid = TerminalGrid::with_scrollback(5, 2, 10);
+
+        // Fill first row
+        grid.move_cursor(0, 0);
+        for c in "AAAAA".chars() {
+            grid.put_char(c);
+        }
+
+        // Fill second row
+        grid.move_cursor(1, 0);
+        for c in "BBBBB".chars() {
+            grid.put_char(c);
+        }
+
+        // One more line should scroll
+        grid.move_cursor(1, 0);
+        for c in "CCCCC".chars() {
+            grid.put_char(c);
+        }
+
+        // Scroll up
+        grid.scroll_up(1);
+
+        assert_eq!(grid.scrollback_len(), 1);
+        assert_eq!(grid.scrollback()[0].iter().map(|c| c.char).collect::<String>(), "AAAAA");
+    }
+
+    #[test]
+    fn test_carriage_return() {
+        let mut grid = TerminalGrid::new();
+        grid.move_cursor(5, 10);
+
+        grid.carriage_return();
+        assert_eq!(grid.cursor().col, 0);
+        assert_eq!(grid.cursor().row, 5); // Row unchanged
+    }
+
+    #[test]
+    fn test_linefeed() {
+        let mut grid = TerminalGrid::with_size(5, 3);
+
+        grid.move_cursor(0, 2);
+        grid.linefeed();
+        assert_eq!(grid.cursor().row, 1);
+        assert_eq!(grid.cursor().col, 2); // Col unchanged
+
+        // At bottom, should scroll
+        grid.move_cursor(2, 0);
+        for c in "LAST!".chars() {
+            grid.put_char(c);
+        }
+        grid.linefeed();
+        assert_eq!(grid.cursor().row, 2); // Still at bottom after scroll
+        assert_eq!(grid.scrollback_len(), 1);
+    }
+
+    #[test]
+    fn test_backspace() {
+        let mut grid = TerminalGrid::new();
+        grid.move_cursor(5, 10);
+
+        grid.backspace();
+        assert_eq!(grid.cursor().col, 9);
+
+        // At column 0, should stay at 0
+        grid.move_cursor(5, 0);
+        grid.backspace();
+        assert_eq!(grid.cursor().col, 0);
+    }
+
+    #[test]
+    fn test_tab() {
+        let mut grid = TerminalGrid::with_size(20, 5);
+
+        grid.move_cursor(0, 0);
+        grid.tab();
+        assert_eq!(grid.cursor().col, 8);
+
+        grid.tab();
+        assert_eq!(grid.cursor().col, 16);
+
+        grid.tab();
+        assert_eq!(grid.cursor().col, 19); // Clamped to max
+    }
+
+    #[test]
+    fn test_insert_delete_lines() {
+        let mut grid = TerminalGrid::with_size(5, 5);
+
+        // Fill with identifiable content
+        for (row, ch) in ['A', 'B', 'C', 'D', 'E'].iter().enumerate() {
+            grid.move_cursor(row, 0);
+            for _ in 0..5 {
+                grid.put_char(*ch);
+            }
+        }
+
+        // Insert 2 blank lines at row 2
+        grid.move_cursor(2, 0);
+        grid.insert_lines(2);
+
+        assert_eq!(grid.row_to_string(0), "AAAAA");
+        assert_eq!(grid.row_to_string(1), "BBBBB");
+        assert_eq!(grid.row_to_string(2), "     "); // Inserted blank
+        assert_eq!(grid.row_to_string(3), "     "); // Inserted blank
+        assert_eq!(grid.row_to_string(4), "CCCCC"); // Shifted up
+        // D and E are lost
+
+        // Delete 1 line at row 0
+        grid.move_cursor(0, 0);
+        grid.delete_lines(1);
+
+        assert_eq!(grid.row_to_string(0), "BBBBB"); // Shifted up
+    }
+
+    #[test]
+    fn test_save_restore_cursor() {
+        let mut grid = TerminalGrid::new();
+
+        grid.move_cursor(10, 20);
+        grid.set_foreground(Color::Indexed(5));
+        grid.set_background(Color::Rgb(100, 100, 100));
+        let mut attrs = TextAttributes::default();
+        attrs.bold = true;
+        grid.set_attributes(attrs);
+
+        let saved = grid.save_cursor();
+
+        // Change state
+        grid.move_cursor(0, 0);
+        grid.set_foreground(Color::Default);
+        grid.set_background(Color::Default);
+        grid.set_attributes(TextAttributes::default());
+
+        // Restore
+        grid.restore_cursor(saved);
+
+        assert_eq!(grid.cursor().row, 10);
+        assert_eq!(grid.cursor().col, 20);
+        assert_eq!(grid.fg_color, Color::Indexed(5));
+        assert_eq!(grid.bg_color, Color::Rgb(100, 100, 100));
+        assert!(grid.attributes().bold);
+    }
+
+    #[test]
+    fn test_to_string() {
+        let mut grid = TerminalGrid::with_size(5, 2);
+
+        grid.move_cursor(0, 0);
+        for c in "Hello".chars() {
+            grid.put_char(c);
+        }
+        grid.move_cursor(1, 0);
+        for c in "World".chars() {
+            grid.put_char(c);
+        }
+
+        assert_eq!(grid.to_string(), "Hello\nWorld");
+    }
+
+    #[test]
+    fn test_scrollback_limit() {
+        let mut grid = TerminalGrid::with_scrollback(5, 2, 3);
+
+        // Scroll more than max_scrollback
+        for ch in ['A', 'B', 'C', 'D', 'E'] {
+            grid.scroll_up(1);
+            grid.move_cursor(0, 0);
+            for _ in 0..5 {
+                grid.put_char(ch);
+            }
+        }
+
+        // Should only keep last 3
+        assert_eq!(grid.scrollback_len(), 3);
+    }
+
+    #[test]
+    fn test_get_cell_out_of_bounds() {
+        let grid = TerminalGrid::with_size(10, 5);
+
+        assert!(grid.get_cell(0, 0).is_some());
+        assert!(grid.get_cell(4, 9).is_some());
+        assert!(grid.get_cell(5, 0).is_none()); // Row out of bounds
+        assert!(grid.get_cell(0, 10).is_none()); // Col out of bounds
+    }
+
+    #[test]
+    fn test_reset() {
+        let mut grid = TerminalGrid::with_size(5, 3);
+
+        grid.move_cursor(2, 4);
+        grid.set_foreground(Color::Indexed(1));
+        grid.set_background(Color::Rgb(50, 50, 50));
+        let mut attrs = TextAttributes::default();
+        attrs.bold = true;
+        grid.set_attributes(attrs);
+
+        grid.put_char('X');
+
+        grid.reset();
+
+        assert_eq!(grid.cursor(), Cursor::default());
+        assert_eq!(grid.fg_color, Color::Default);
+        assert_eq!(grid.bg_color, Color::Default);
+        assert_eq!(grid.attributes(), TextAttributes::default());
+        assert!(grid.scrollback().is_empty());
+
+        // All cells should be empty
+        for row in grid.as_rows() {
+            for cell in row {
+                assert!(cell.is_empty());
+            }
+        }
+    }
+}
