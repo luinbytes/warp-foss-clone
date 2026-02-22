@@ -24,6 +24,7 @@ winit = "0.30"
 
 # Font rendering
 fontdue = "0.9"
+bytemuck = { version = "1", features = ["derive"] }
 
 # Config
 toml = "0.8"

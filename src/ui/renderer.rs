@@ -1,6 +1,14 @@
+//! GPU-accelerated renderer using wgpu.
+//!
+//! This module provides the main rendering infrastructure for the terminal emulator,
+//! including text rendering via the text module.
+
 use thiserror::Error;
 use wgpu::{Device, Queue, Surface, SurfaceConfiguration, TextureViewDescriptor};
 use winit::window::Window;
+
+use crate::terminal::grid::TerminalGrid;
+use super::text::{TextError, TextRenderer};
 
 #[derive(Error, Debug)]
 pub enum RendererError {
@@ -21,7 +29,13 @@ pub enum RendererError {
     
     #[error("Render error: {0}")]
     Render(String),
+    
+    #[error("Text rendering error: {0}")]
+    Text(#[from] TextError),
 }
+
+/// Default font size in pixels
+const DEFAULT_FONT_SIZE: f32 = 16.0;
 
 /// GPU-accelerated renderer using wgpu
 pub struct Renderer<'window> {
@@ -30,6 +44,10 @@ pub struct Renderer<'window> {
     surface: Surface<'window>,
     config: SurfaceConfiguration,
     render_pipeline: wgpu::RenderPipeline,
+    /// Text renderer for terminal content
+    text_renderer: TextRenderer,
+    /// Text bind group (recreated each frame if needed)
+    text_bind_group: Option<wgpu::BindGroup>,
 }
 
 impl<'window> Renderer<'window> {
@@ -98,12 +116,21 @@ impl<'window> Renderer<'window> {
         // Create a basic render pipeline (placeholder for now)
         let render_pipeline = Self::create_render_pipeline(&device, config.format);
         
+        // Create text renderer
+        let mut text_renderer = TextRenderer::new(&device, DEFAULT_FONT_SIZE, (config.width, config.height))?;
+        text_renderer.init_pipeline(&device, config.format);
+        
+        // Create initial bind group
+        let text_bind_group = text_renderer.create_bind_group(&device);
+        
         Ok(Self {
             device,
             queue,
             surface,
             config,
             render_pipeline,
+            text_renderer,
+            text_bind_group,
         })
     }
     
@@ -169,10 +196,57 @@ impl<'window> Renderer<'window> {
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
+            self.text_renderer.resize(width, height);
         }
     }
     
-    /// Render a frame
+    /// Render a frame with the terminal grid content
+    pub fn render_grid(&mut self, grid: &TerminalGrid) -> Result<(), RendererError> {
+        // Clear any previous frame's text
+        self.text_renderer.clear();
+        
+        // Calculate cell dimensions
+        let font_size = self.text_renderer.font_size();
+        let cell_width = font_size * 0.6; // Approximate monospace character width
+        let cell_height = font_size;
+        
+        // Render all visible cells
+        let rows = grid.rows();
+        let cols = grid.cols();
+        
+        for row in 0..rows {
+            for col in 0..cols {
+                if let Some(cell) = grid.get_cell(row, col) {
+                    if cell.char != ' ' {
+                        let x = col as f32 * cell_width;
+                        let y = row as f32 * cell_height;
+                        
+                        self.text_renderer.queue_char(
+                            cell.char,
+                            x,
+                            y,
+                            cell.fg_color,
+                            cell.bg_color,
+                            cell.attributes.bold,
+                        )?;
+                    }
+                }
+            }
+        }
+        
+        // Prepare text renderer (upload glyph atlas and vertex data)
+        self.text_renderer.prepare(&self.device, &self.queue);
+        
+        // Update bind group if needed
+        if self.text_bind_group.is_none() {
+            self.text_bind_group = self.text_renderer.create_bind_group(&self.device);
+        }
+        
+        // Render the frame
+        self.render()
+    }
+    
+    /// Render a frame (basic clear only)
     pub fn render(&mut self) -> Result<(), RendererError> {
         let output = self
             .surface
@@ -188,7 +262,7 @@ impl<'window> Renderer<'window> {
             });
         
         {
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
@@ -207,8 +281,13 @@ impl<'window> Renderer<'window> {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            // Note: We'll draw actual geometry here later
-            // For now, just clearing to dark background
+            
+            // Render text if we have vertices and bind group
+            if let Some(ref bind_group) = self.text_bind_group {
+                if self.text_renderer.vertex_count() > 0 {
+                    self.text_renderer.render(&mut render_pass, bind_group);
+                }
+            }
         }
         
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -230,6 +309,23 @@ impl<'window> Renderer<'window> {
     /// Get current surface configuration
     pub fn config(&self) -> &SurfaceConfiguration {
         &self.config
+    }
+    
+    /// Get the font size
+    pub fn font_size(&self) -> f32 {
+        self.text_renderer.font_size()
+    }
+    
+    /// Calculate terminal dimensions based on current window size
+    pub fn terminal_dimensions(&self) -> (usize, usize) {
+        let font_size = self.text_renderer.font_size();
+        let cell_width = font_size * 0.6;
+        let cell_height = font_size;
+        
+        let cols = (self.config.width as f32 / cell_width).floor() as usize;
+        let rows = (self.config.height as f32 / cell_height).floor() as usize;
+        
+        (cols.max(1), rows.max(1))
     }
 }
 
