@@ -3,6 +3,8 @@
 //! This module provides terminal parsing capabilities for handling VT100/VT200/VT300/VT420
 //! escape sequences from PTY output.
 
+#![allow(dead_code)]
+
 use vte::{Params, Perform};
 
 /// Represents a color (either as an index into a palette or as an RGB value).
@@ -326,7 +328,7 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                 }
                 self.output.tab();
             }
-            0x0A | 0x0B | 0x0C => {
+            0x0A..=0x0C => {
                 // LF, VT, FF - Line Feed
                 if self.state.cursor.row < self.rows - 1 {
                     self.state.cursor.row += 1;
@@ -359,7 +361,7 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
     }
 
     fn csi_dispatch(&mut self, params: &Params, _intermediates: &[u8], _ignore: bool, action: char) {
-        let params_vec: Vec<Vec<u16>> = params.iter().map(|p| p.iter().copied().collect()).collect();
+        let params_vec: Vec<Vec<u16>> = params.iter().map(|p| p.to_vec()).collect();
         let flat_params: Vec<u16> = params_vec.iter().flat_map(|p| p.iter().copied()).collect();
 
         match action {
@@ -628,7 +630,7 @@ impl Perform for ParserState {
                 // HT - Horizontal Tab (move to next tab stop, every 8 columns)
                 self.cursor.col = (self.cursor.col + 8) & !7;
             }
-            0x0A | 0x0B | 0x0C => {
+            0x0A..=0x0C => {
                 // LF, VT, FF - Line Feed (move down, possibly scroll)
                 self.cursor.row += 1;
                 // Note: Scrolling would be handled here in a full implementation
@@ -669,7 +671,7 @@ impl Perform for ParserState {
 
     /// Handle a CSI escape sequence.
     fn csi_dispatch(&mut self, params: &Params, _intermediates: &[u8], _ignore: bool, action: char) {
-        let params_vec: Vec<Vec<u16>> = params.iter().map(|p| p.iter().copied().collect()).collect();
+        let params_vec: Vec<Vec<u16>> = params.iter().map(|p| p.to_vec()).collect();
         let flat_params: Vec<u16> = params_vec.iter().flat_map(|p| p.iter().copied()).collect();
 
         match action {

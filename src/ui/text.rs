@@ -80,7 +80,7 @@ pub struct GlyphAtlas {
 
 impl GlyphAtlas {
     /// Create a new glyph atlas with embedded monospace font.
-    pub fn new(device: &Device, font_size: f32) -> Result<Self, TextError> {
+    pub fn new(_device: &Device, font_size: f32) -> Result<Self, TextError> {
         // Load embedded monospace font (DejaVu Sans Mono is a good default)
         let font_data = include_bytes!("../fonts/DejaVuSansMono.ttf");
         let font = Font::from_bytes(
@@ -479,7 +479,7 @@ impl TextRenderer {
     }
 
     /// Convert Color to RGBA f32 array.
-    fn color_to_rgba(color: Color, default_fg: [f32; 4], default_bg: [f32; 4]) -> [f32; 4] {
+    fn color_to_rgba(color: Color, default_fg: [f32; 4], _default_bg: [f32; 4]) -> [f32; 4] {
         match color {
             Color::Default => default_fg,
             Color::Indexed(idx) => {
@@ -559,7 +559,7 @@ impl TextRenderer {
         y: f32,
         fg_color: Color,
         bg_color: Color,
-        bold: bool,
+        _bold: bool,
     ) -> Result<(), TextError> {
         // Cache glyph if not already cached
         if self.atlas.get_glyph(c).is_none() {
@@ -577,7 +577,7 @@ impl TextRenderer {
         let default_bg = [0.05, 0.05, 0.05, 1.0];
 
         let fg = Self::color_to_rgba(fg_color, default_fg, default_bg);
-        let bg = Self::color_to_rgba(bg_color, default_bg, default_bg);
+        let _bg = Self::color_to_rgba(bg_color, default_bg, default_bg);
 
         // Calculate glyph position
         let glyph_x = x + glyph.left_side_bearing;
@@ -594,10 +594,10 @@ impl TextRenderer {
         let (u_max, v_max) = glyph.uv_max;
 
         // Create two triangles (quad) for the glyph background
-        let bg_ndc_x = x / screen_w * 2.0 - 1.0;
-        let bg_ndc_y = 1.0 - y / screen_h * 2.0;
-        let cell_w = glyph.advance_width / screen_w * 2.0;
-        let cell_h = self.atlas.font_size() / screen_h * 2.0;
+        let _bg_ndc_x = x / screen_w * 2.0 - 1.0;
+        let _bg_ndc_y = 1.0 - y / screen_h * 2.0;
+        let _cell_w = glyph.advance_width / screen_w * 2.0;
+        let _cell_h = self.atlas.font_size() / screen_h * 2.0;
 
         // Background quad (using UV 0,0 to cover the whole cell - we'll use a white pixel)
         // For now, skip background and just render foreground

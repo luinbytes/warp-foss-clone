@@ -3,6 +3,8 @@
 //! This module provides the main rendering infrastructure for the terminal emulator,
 //! including text rendering via the text module.
 
+#![allow(dead_code)]
+
 use thiserror::Error;
 use wgpu::{Device, Queue, Surface, SurfaceConfiguration, TextureViewDescriptor};
 use winit::window::Window;
