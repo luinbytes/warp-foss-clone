@@ -241,7 +241,8 @@ impl TerminalApp {
         let data = {
             if let Some(ref pty) = self.pty {
                 if let Ok(mut session) = pty.lock() {
-                    let mut buf = [0u8; 4096];
+                    // Use heap-allocated buffer to avoid stack pressure on Windows
+                    let mut buf = vec![0u8; 4096];
                     match session.read(&mut buf) {
                         Ok(0) => {
                             // EOF - PTY closed
@@ -250,7 +251,8 @@ impl TerminalApp {
                             return;
                         }
                         Ok(n) => {
-                            Some(buf[..n].to_vec())
+                            buf.truncate(n);
+                            Some(buf)
                         }
                         Err(e) => {
                             // Would block is expected when no data available
@@ -268,7 +270,7 @@ impl TerminalApp {
                 None
             }
         };
-        
+
         // Process the data after releasing the lock
         if let Some(data) = data {
             self.process_terminal_output(&data);

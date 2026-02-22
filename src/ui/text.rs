@@ -5,6 +5,7 @@
 
 use fontdue::{Font, FontSettings};
 use std::collections::HashMap;
+use std::sync::LazyLock;
 use thiserror::Error;
 use wgpu::{Device, Queue, TextureFormat};
 
@@ -21,6 +22,57 @@ const ATLAS_ROWS: u32 = 16;
 
 /// Total atlas size
 const ATLAS_SIZE: u32 = MAX_GLYPH_SIZE * ATLAS_COLUMNS;
+
+/// Static ANSI color palette (256 colors, each with RGBA f32)
+/// Using LazyLock to avoid stack allocation during runtime
+static ANSI_PALETTE: LazyLock<[[f32; 4]; 256]> = LazyLock::new(|| {
+    let mut palette = [[0.0f32; 4]; 256];
+
+    // Basic 16 colors
+    let basic: [[f32; 4]; 16] = [
+        [0.0, 0.0, 0.0, 1.0],       // 0: Black
+        [0.8, 0.0, 0.0, 1.0],       // 1: Red
+        [0.0, 0.8, 0.0, 1.0],       // 2: Green
+        [0.8, 0.8, 0.0, 1.0],       // 3: Yellow
+        [0.0, 0.0, 0.8, 1.0],       // 4: Blue
+        [0.8, 0.0, 0.8, 1.0],       // 5: Magenta
+        [0.0, 0.8, 0.8, 1.0],       // 6: Cyan
+        [0.8, 0.8, 0.8, 1.0],       // 7: White
+        [0.5, 0.5, 0.5, 1.0],       // 8: Bright Black
+        [1.0, 0.0, 0.0, 1.0],       // 9: Bright Red
+        [0.0, 1.0, 0.0, 1.0],       // 10: Bright Green
+        [1.0, 1.0, 0.0, 1.0],       // 11: Bright Yellow
+        [0.0, 0.0, 1.0, 1.0],       // 12: Bright Blue
+        [1.0, 0.0, 1.0, 1.0],       // 13: Bright Magenta
+        [0.0, 1.0, 1.0, 1.0],       // 14: Bright Cyan
+        [1.0, 1.0, 1.0, 1.0],       // 15: Bright White
+    ];
+
+    for (i, &color) in basic.iter().enumerate() {
+        palette[i] = color;
+    }
+
+    // 216 color cube (16-231)
+    for i in 0..216 {
+        let r = (i / 36) % 6;
+        let g = (i / 6) % 6;
+        let b = i % 6;
+        palette[16 + i] = [
+            if r > 0 { (r * 40 + 55) as f32 / 255.0 } else { 0.0 },
+            if g > 0 { (g * 40 + 55) as f32 / 255.0 } else { 0.0 },
+            if b > 0 { (b * 40 + 55) as f32 / 255.0 } else { 0.0 },
+            1.0,
+        ];
+    }
+
+    // Grayscale (232-255)
+    for i in 0..24 {
+        let gray = (i * 10 + 8) as f32 / 255.0;
+        palette[232 + i] = [gray, gray, gray, 1.0];
+    }
+
+    palette
+});
 
 #[derive(Error, Debug)]
 pub enum TextError {
@@ -483,8 +535,8 @@ impl TextRenderer {
         match color {
             Color::Default => default_fg,
             Color::Indexed(idx) => {
-                // ANSI color palette (16 basic colors + extended)
-                let palette = Self::get_ansi_palette();
+                // Use static ANSI color palette to avoid stack allocation
+                let palette = &*ANSI_PALETTE;
                 let idx = idx as usize;
                 if idx < palette.len() {
                     palette[idx]
@@ -499,56 +551,6 @@ impl TextRenderer {
                 1.0,
             ],
         }
-    }
-
-    /// Get the ANSI color palette.
-    fn get_ansi_palette() -> [[f32; 4]; 256] {
-        let mut palette = [[0.0f32; 4]; 256];
-        
-        // Basic 16 colors
-        let basic: [[f32; 4]; 16] = [
-            [0.0, 0.0, 0.0, 1.0],       // 0: Black
-            [0.8, 0.0, 0.0, 1.0],       // 1: Red
-            [0.0, 0.8, 0.0, 1.0],       // 2: Green
-            [0.8, 0.8, 0.0, 1.0],       // 3: Yellow
-            [0.0, 0.0, 0.8, 1.0],       // 4: Blue
-            [0.8, 0.0, 0.8, 1.0],       // 5: Magenta
-            [0.0, 0.8, 0.8, 1.0],       // 6: Cyan
-            [0.8, 0.8, 0.8, 1.0],       // 7: White
-            [0.5, 0.5, 0.5, 1.0],       // 8: Bright Black
-            [1.0, 0.0, 0.0, 1.0],       // 9: Bright Red
-            [0.0, 1.0, 0.0, 1.0],       // 10: Bright Green
-            [1.0, 1.0, 0.0, 1.0],       // 11: Bright Yellow
-            [0.0, 0.0, 1.0, 1.0],       // 12: Bright Blue
-            [1.0, 0.0, 1.0, 1.0],       // 13: Bright Magenta
-            [0.0, 1.0, 1.0, 1.0],       // 14: Bright Cyan
-            [1.0, 1.0, 1.0, 1.0],       // 15: Bright White
-        ];
-        
-        for (i, &color) in basic.iter().enumerate() {
-            palette[i] = color;
-        }
-        
-        // 216 color cube (16-231)
-        for i in 0..216 {
-            let r = (i / 36) % 6;
-            let g = (i / 6) % 6;
-            let b = i % 6;
-            palette[16 + i] = [
-                if r > 0 { (r * 40 + 55) as f32 / 255.0 } else { 0.0 },
-                if g > 0 { (g * 40 + 55) as f32 / 255.0 } else { 0.0 },
-                if b > 0 { (b * 40 + 55) as f32 / 255.0 } else { 0.0 },
-                1.0,
-            ];
-        }
-        
-        // Grayscale (232-255)
-        for i in 0..24 {
-            let gray = (i * 10 + 8) as f32 / 255.0;
-            palette[232 + i] = [gray, gray, gray, 1.0];
-        }
-        
-        palette
     }
 
     /// Queue a character for rendering.

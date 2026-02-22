@@ -2969,6 +2969,7 @@ dependencies = [
  "fontdue",
  "futures",
  "keyring",
+ "once_cell",
  "pollster",
  "portable-pty",
  "reqwest",
