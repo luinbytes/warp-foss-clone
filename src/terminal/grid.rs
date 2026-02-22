@@ -3,7 +3,7 @@
 //! This module provides a 2D grid representation of terminal content,
 //! including character data, colors, text attributes, and scrollback history.
 
-use super::parser::{Color, TextAttributes};
+use super::parser::{Color, TextAttributes, TerminalOutput};
 
 /// A single cell in the terminal grid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -581,6 +581,42 @@ impl TerminalGrid {
 impl Default for TerminalGrid {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Implement TerminalOutput trait to allow the parser to write directly to the grid.
+impl TerminalOutput for TerminalGrid {
+    fn put_char(&mut self, c: char) {
+        // Use the grid's put_char which handles wrapping and scrolling
+        self.put_char(c);
+    }
+
+    fn backspace(&mut self) {
+        self.backspace();
+    }
+
+    fn tab(&mut self) {
+        self.tab();
+    }
+
+    fn linefeed(&mut self) {
+        self.linefeed();
+    }
+
+    fn carriage_return(&mut self) {
+        self.carriage_return();
+    }
+
+    fn move_cursor(&mut self, row: usize, col: usize) {
+        self.move_cursor(row, col);
+    }
+
+    fn clear_screen(&mut self) {
+        self.clear_screen();
+    }
+
+    fn cursor_position(&self) -> (usize, usize) {
+        (self.cursor.row, self.cursor.col)
     }
 }
 

@@ -275,45 +275,18 @@ impl TerminalApp {
         }
     }
     
-    /// Process terminal output bytes
+    /// Process terminal output bytes through the parser to the grid.
+    /// 
+    /// This is the main pipeline: PTY bytes → Parser (escape sequences) → Grid (screen buffer)
     fn process_terminal_output(&mut self, data: &[u8]) {
-        // Process each byte through the parser
-        for &byte in data {
-            // Use the parser to handle the byte
-            self.parser.parse_bytes(&[byte]);
-            
-            // Update the grid based on the byte
-            let state = &self.parser.state;
-            
-            match byte {
-                // Control characters
-                0x08 => {
-                    // Backspace
-                    self.grid.backspace();
-                }
-                0x09 => {
-                    // Tab
-                    self.grid.tab();
-                }
-                0x0A | 0x0B | 0x0C => {
-                    // Line feed
-                    self.grid.linefeed();
-                }
-                0x0D => {
-                    // Carriage return
-                    self.grid.carriage_return();
-                }
-                // Printable characters (handled by put_char with current attributes)
-                0x20..=0x7E => {
-                    self.grid.set_foreground(state.fg_color);
-                    self.grid.set_background(state.bg_color);
-                    self.grid.set_attributes(state.attributes);
-                    self.grid.put_char(byte as char);
-                }
-                // Extended ASCII / UTF-8 handled elsewhere
-                _ => {}
-            }
-        }
+        // Sync grid colors/attributes from parser state before processing
+        self.grid.set_foreground(self.parser.state.fg_color);
+        self.grid.set_background(self.parser.state.bg_color);
+        self.grid.set_attributes(self.parser.state.attributes);
+        
+        // Parse bytes and output directly to the grid
+        // This handles escape sequences and writes characters to the grid
+        self.parser.parse_bytes_with_output(data, &mut self.grid);
     }
     
     /// Send input to the PTY

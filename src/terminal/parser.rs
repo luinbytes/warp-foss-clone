@@ -111,6 +111,34 @@ impl Default for ParserState {
     }
 }
 
+/// Callback trait for handling parsed terminal output.
+/// Implement this to receive characters and control sequences from the parser.
+pub trait TerminalOutput {
+    /// Put a character at the current cursor position with current attributes.
+    fn put_char(&mut self, c: char);
+    
+    /// Handle backspace.
+    fn backspace(&mut self);
+    
+    /// Handle tab.
+    fn tab(&mut self);
+    
+    /// Handle line feed.
+    fn linefeed(&mut self);
+    
+    /// Handle carriage return.
+    fn carriage_return(&mut self);
+    
+    /// Move cursor to position.
+    fn move_cursor(&mut self, row: usize, col: usize);
+    
+    /// Clear screen.
+    fn clear_screen(&mut self);
+    
+    /// Get current cursor position.
+    fn cursor_position(&self) -> (usize, usize);
+}
+
 /// Terminal parser that processes ANSI escape sequences.
 ///
 /// This parser uses the `vte` crate to handle escape sequence parsing and
@@ -156,6 +184,24 @@ impl TerminalParser {
     pub fn parse_bytes(&mut self, bytes: &[u8]) {
         for byte in bytes {
             self.parser.advance(&mut self.state, *byte);
+        }
+    }
+
+    /// Parse bytes and output to a TerminalOutput sink.
+    ///
+    /// This is the preferred method for connecting the parser to a grid or screen.
+    /// The parser updates its internal state AND writes characters to the output.
+    pub fn parse_bytes_with_output<O: TerminalOutput>(&mut self, bytes: &[u8], output: &mut O) {
+        // Create a wrapper that forwards to both state and output
+        let mut wrapper = ParserOutputWrapper {
+            state: &mut self.state,
+            output,
+            cols: self.cols,
+            rows: self.rows,
+        };
+        
+        for byte in bytes {
+            self.parser.advance(&mut wrapper, *byte);
         }
     }
 
@@ -244,6 +290,312 @@ impl TerminalParser {
                 }
             }
             _ => None,
+        }
+    }
+}
+
+/// Wrapper that forwards parser events to both state and output.
+/// This is used by `parse_bytes_with_output` to update the grid.
+struct ParserOutputWrapper<'a, O: TerminalOutput> {
+    state: &'a mut ParserState,
+    output: &'a mut O,
+    cols: usize,
+    rows: usize,
+}
+
+impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
+    fn print(&mut self, c: char) {
+        // Write character to output with current attributes
+        self.output.put_char(c);
+    }
+
+    fn execute(&mut self, byte: u8) {
+        match byte {
+            0x08 => {
+                // BS - Backspace
+                if self.state.cursor.col > 0 {
+                    self.state.cursor.col -= 1;
+                }
+                self.output.backspace();
+            }
+            0x09 => {
+                // HT - Horizontal Tab
+                self.state.cursor.col = (self.state.cursor.col + 8) & !7;
+                if self.state.cursor.col >= self.cols {
+                    self.state.cursor.col = self.cols - 1;
+                }
+                self.output.tab();
+            }
+            0x0A | 0x0B | 0x0C => {
+                // LF, VT, FF - Line Feed
+                if self.state.cursor.row < self.rows - 1 {
+                    self.state.cursor.row += 1;
+                }
+                self.output.linefeed();
+            }
+            0x0D => {
+                // CR - Carriage Return
+                self.state.cursor.col = 0;
+                self.output.carriage_return();
+            }
+            _ => {}
+        }
+    }
+
+    fn hook(&mut self, _params: &Params, _intermediates: &[u8], _ignore: bool, _action: char) {
+        // DCS - not commonly used
+    }
+
+    fn put(&mut self, _byte: u8) {
+        // Part of DCS handling
+    }
+
+    fn unhook(&mut self) {
+        // End of DCS
+    }
+
+    fn osc_dispatch(&mut self, _params: &[&[u8]], _bell_terminated: bool) {
+        // OSC sequences - window titles, etc.
+    }
+
+    fn csi_dispatch(&mut self, params: &Params, _intermediates: &[u8], _ignore: bool, action: char) {
+        let params_vec: Vec<Vec<u16>> = params.iter().map(|p| p.iter().copied().collect()).collect();
+        let flat_params: Vec<u16> = params_vec.iter().flat_map(|p| p.iter().copied()).collect();
+
+        match action {
+            'A' => {
+                // CUU - Cursor Up
+                let n = flat_params.first().copied().unwrap_or(1) as usize;
+                self.state.cursor.row = self.state.cursor.row.saturating_sub(n);
+                let (row, col) = self.output.cursor_position();
+                self.output.move_cursor(row.saturating_sub(n), col);
+            }
+            'B' => {
+                // CUD - Cursor Down
+                let n = flat_params.first().copied().unwrap_or(1) as usize;
+                self.state.cursor.row = (self.state.cursor.row + n).min(self.rows - 1);
+                let (row, col) = self.output.cursor_position();
+                self.output.move_cursor((row + n).min(self.rows - 1), col);
+            }
+            'C' => {
+                // CUF - Cursor Forward (Right)
+                let n = flat_params.first().copied().unwrap_or(1) as usize;
+                self.state.cursor.col = (self.state.cursor.col + n).min(self.cols - 1);
+                let (row, col) = self.output.cursor_position();
+                self.output.move_cursor(row, (col + n).min(self.cols - 1));
+            }
+            'D' => {
+                // CUB - Cursor Back (Left)
+                let n = flat_params.first().copied().unwrap_or(1) as usize;
+                self.state.cursor.col = self.state.cursor.col.saturating_sub(n);
+                let (row, col) = self.output.cursor_position();
+                self.output.move_cursor(row, col.saturating_sub(n));
+            }
+            'E' => {
+                // CNL - Cursor Next Line
+                let n = flat_params.first().copied().unwrap_or(1) as usize;
+                self.state.cursor.row = (self.state.cursor.row + n).min(self.rows - 1);
+                self.state.cursor.col = 0;
+                let (row, _) = self.output.cursor_position();
+                self.output.move_cursor((row + n).min(self.rows - 1), 0);
+            }
+            'F' => {
+                // CPL - Cursor Previous Line
+                let n = flat_params.first().copied().unwrap_or(1) as usize;
+                self.state.cursor.row = self.state.cursor.row.saturating_sub(n);
+                self.state.cursor.col = 0;
+                let (row, _) = self.output.cursor_position();
+                self.output.move_cursor(row.saturating_sub(n), 0);
+            }
+            'G' => {
+                // CHA - Cursor Horizontal Absolute
+                let n = flat_params.first().copied().unwrap_or(1) as usize;
+                self.state.cursor.col = n.saturating_sub(1);
+                let (row, _) = self.output.cursor_position();
+                self.output.move_cursor(row, n.saturating_sub(1));
+            }
+            'H' | 'f' => {
+                // CUP - Cursor Position (row; col)
+                let row_param = flat_params.first().copied().unwrap_or(1) as usize;
+                let col_param = flat_params.get(1).copied().unwrap_or(1) as usize;
+                self.state.cursor.row = row_param.saturating_sub(1).min(self.rows - 1);
+                self.state.cursor.col = col_param.saturating_sub(1).min(self.cols - 1);
+                self.output.move_cursor(
+                    row_param.saturating_sub(1).min(self.rows - 1),
+                    col_param.saturating_sub(1).min(self.cols - 1),
+                );
+            }
+            'J' => {
+                // ED - Erase in Display
+                let mode = flat_params.first().copied().unwrap_or(0);
+                match mode {
+                    2 | 3 => {
+                        // Erase entire screen
+                        self.output.clear_screen();
+                        self.state.cursor.row = 0;
+                        self.state.cursor.col = 0;
+                        self.output.move_cursor(0, 0);
+                    }
+                    _ => {}
+                }
+            }
+            'm' => {
+                // SGR - Select Graphic Rendition
+                if flat_params.is_empty() {
+                    self.state.attributes.reset();
+                    self.state.fg_color = Color::Default;
+                    self.state.bg_color = Color::Default;
+                } else {
+                    let mut i = 0;
+                    while i < flat_params.len() {
+                        match flat_params[i] {
+                            0 => {
+                                self.state.attributes.reset();
+                                self.state.fg_color = Color::Default;
+                                self.state.bg_color = Color::Default;
+                            }
+                            1 => self.state.attributes.bold = true,
+                            2 => self.state.attributes.dim = true,
+                            3 => self.state.attributes.italic = true,
+                            4 => self.state.attributes.underline = true,
+                            5 => self.state.attributes.blink = true,
+                            7 => self.state.attributes.reverse = true,
+                            8 => self.state.attributes.hidden = true,
+                            9 => self.state.attributes.strikethrough = true,
+                            22 => {
+                                self.state.attributes.bold = false;
+                                self.state.attributes.dim = false;
+                            }
+                            23 => self.state.attributes.italic = false,
+                            24 => self.state.attributes.underline = false,
+                            25 => self.state.attributes.blink = false,
+                            27 => self.state.attributes.reverse = false,
+                            28 => self.state.attributes.hidden = false,
+                            29 => self.state.attributes.strikethrough = false,
+                            30..=37 => {
+                                self.state.fg_color = Color::Indexed((flat_params[i] - 30) as u8);
+                            }
+                            38 => {
+                                if i + 1 < flat_params.len() {
+                                    match flat_params[i + 1] {
+                                        5 => {
+                                            if i + 2 < flat_params.len() {
+                                                self.state.fg_color = Color::Indexed(flat_params[i + 2] as u8);
+                                                i += 2;
+                                            }
+                                        }
+                                        2 => {
+                                            if i + 4 < flat_params.len() {
+                                                self.state.fg_color = Color::Rgb(
+                                                    flat_params[i + 2] as u8,
+                                                    flat_params[i + 3] as u8,
+                                                    flat_params[i + 4] as u8,
+                                                );
+                                                i += 4;
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            39 => self.state.fg_color = Color::Default,
+                            40..=47 => {
+                                self.state.bg_color = Color::Indexed((flat_params[i] - 40) as u8);
+                            }
+                            48 => {
+                                if i + 1 < flat_params.len() {
+                                    match flat_params[i + 1] {
+                                        5 => {
+                                            if i + 2 < flat_params.len() {
+                                                self.state.bg_color = Color::Indexed(flat_params[i + 2] as u8);
+                                                i += 2;
+                                            }
+                                        }
+                                        2 => {
+                                            if i + 4 < flat_params.len() {
+                                                self.state.bg_color = Color::Rgb(
+                                                    flat_params[i + 2] as u8,
+                                                    flat_params[i + 3] as u8,
+                                                    flat_params[i + 4] as u8,
+                                                );
+                                                i += 4;
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            49 => self.state.bg_color = Color::Default,
+                            90..=97 => {
+                                self.state.fg_color = Color::Indexed((flat_params[i] - 90 + 8) as u8);
+                            }
+                            100..=107 => {
+                                self.state.bg_color = Color::Indexed((flat_params[i] - 100 + 8) as u8);
+                            }
+                            _ => {}
+                        }
+                        i += 1;
+                    }
+                }
+            }
+            's' => {
+                // SCP - Save Cursor Position
+                self.state.saved_cursor = self.state.cursor;
+                self.state.saved_attributes = self.state.attributes;
+            }
+            'u' => {
+                // RCP - Restore Cursor Position
+                self.state.cursor = self.state.saved_cursor;
+                self.state.attributes = self.state.saved_attributes;
+                self.output.move_cursor(self.state.cursor.row, self.state.cursor.col);
+            }
+            _ => {}
+        }
+    }
+
+    fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, byte: u8) {
+        match byte {
+            b'c' => {
+                // RIS - Reset to Initial State
+                self.state.cursor = CursorPosition::default();
+                self.state.attributes = TextAttributes::default();
+                self.state.fg_color = Color::Default;
+                self.state.bg_color = Color::Default;
+                self.output.clear_screen();
+                self.output.move_cursor(0, 0);
+            }
+            b'M' => {
+                // RI - Reverse Index
+                if self.state.cursor.row > 0 {
+                    self.state.cursor.row -= 1;
+                }
+            }
+            b'D' => {
+                // IND - Index
+                if self.state.cursor.row < self.rows - 1 {
+                    self.state.cursor.row += 1;
+                }
+            }
+            b'E' => {
+                // NEL - Next Line
+                if self.state.cursor.row < self.rows - 1 {
+                    self.state.cursor.row += 1;
+                }
+                self.state.cursor.col = 0;
+                self.output.carriage_return();
+            }
+            b'7' => {
+                // DECSC - Save Cursor
+                self.state.saved_cursor = self.state.cursor;
+                self.state.saved_attributes = self.state.attributes;
+            }
+            b'8' => {
+                // DECRC - Restore Cursor
+                self.state.cursor = self.state.saved_cursor;
+                self.state.attributes = self.state.saved_attributes;
+                self.output.move_cursor(self.state.cursor.row, self.state.cursor.col);
+            }
+            _ => {}
         }
     }
 }
