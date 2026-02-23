@@ -48,6 +48,9 @@ thiserror = "2"
 once_cell = "1.19"
 anyhow = "1"
 
+# Clipboard
+arboard = "3.5"
+
 [dev-dependencies]
 tokio-test = "0.4"
 

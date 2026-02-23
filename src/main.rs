@@ -20,11 +20,13 @@ use terminal::grid::TerminalGrid;
 use terminal::parser::TerminalParser;
 use terminal::pty::{PtyConfig, PtySession};
 use ui::input::InputHandler;
+use ui::selection::{Clipboard, SelectionState, extract_selected_text};
 use winit::{
     application::ApplicationHandler,
-    dpi::PhysicalSize,
-    event::WindowEvent,
+    dpi::{PhysicalPosition, PhysicalSize},
+    event::{DeviceId, ElementState, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    keyboard::{Key, ModifiersState, NamedKey},
     window::{Window, WindowId},
 };
 
@@ -59,12 +61,23 @@ struct TerminalApp {
     grid: TerminalGrid,
     /// Input handler for keyboard events
     input_handler: InputHandler,
+    /// Selection state for mouse selection
+    selection_state: SelectionState,
+    /// Clipboard manager
+    clipboard: Clipboard,
     /// Whether the app is running
     running: bool,
     /// Last frame time for FPS limiting
     last_frame: Instant,
     /// Target frame duration (60 FPS)
     frame_duration: Duration,
+    /// Cell dimensions in pixels
+    cell_width: u32,
+    cell_height: u32,
+    /// Current cursor position in pixels
+    cursor_position: Option<PhysicalPosition<f64>>,
+    /// Current modifier state
+    modifiers: ModifiersState,
 }
 
 /// Type-erased renderer holder to work around lifetime issues
@@ -208,7 +221,7 @@ impl RendererHolder {
 impl TerminalApp {
     fn new() -> Self {
         let config = AppConfig::default();
-        
+
         Self {
             window: None,
             renderer: None,
@@ -216,9 +229,15 @@ impl TerminalApp {
             parser: TerminalParser::with_size(config.cols as usize, config.rows as usize),
             grid: TerminalGrid::with_size(config.cols as usize, config.rows as usize),
             input_handler: InputHandler::new(),
+            selection_state: SelectionState::new(),
+            clipboard: Clipboard::new(),
             running: false,
             last_frame: Instant::now(),
             frame_duration: Duration::from_micros(16_667), // ~60 FPS
+            cell_width: 10,
+            cell_height: 20,
+            cursor_position: None,
+            modifiers: ModifiersState::default(),
         }
     }
     
@@ -370,6 +389,93 @@ impl TerminalApp {
             }
         }
     }
+
+    /// Convert pixel position to grid coordinates
+    fn pixel_to_grid(&self, x: f64, y: f64) -> Option<(usize, usize)> {
+        let col = (x / self.cell_width as f64) as usize;
+        let row = (y / self.cell_height as f64) as usize;
+
+        if col < self.grid.cols() && row < self.grid.rows() {
+            Some((col, row))
+        } else {
+            None
+        }
+    }
+
+    /// Handle mouse button press
+    fn handle_mouse_button(
+        &mut self,
+        _device_id: DeviceId,
+        button: MouseButton,
+        state: ElementState,
+    ) {
+        // Only handle left mouse button for selection
+        if button != MouseButton::Left {
+            return;
+        }
+
+        if let Some(pos) = self.cursor_position {
+            if let Some((col, row)) = self.pixel_to_grid(pos.x, pos.y) {
+                use crate::terminal::grid::Cursor;
+
+                match state {
+                    ElementState::Pressed => {
+                        // Start selection
+                        self.selection_state.start_selection(Cursor::new(row, col));
+                    }
+                    ElementState::Released => {
+                        // End selection
+                        self.selection_state.end_selection();
+
+                        // If Shift is held, copy to clipboard
+                        if self.modifiers.shift_key() && self.selection_state.has_selection() {
+                            let selected_text = extract_selected_text(
+                                self.grid.as_rows(),
+                                &self.selection_state.region,
+                            );
+                            if !selected_text.is_empty() {
+                                if let Err(e) = self.clipboard.copy(&selected_text) {
+                                    tracing::warn!("Failed to copy to clipboard: {}", e);
+                                } else {
+                                    tracing::debug!("Copied selection to clipboard");
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Clicked outside grid, clear selection
+                self.selection_state.clear();
+            }
+        }
+    }
+
+    /// Handle mouse motion
+    fn handle_mouse_motion(&mut self, position: PhysicalPosition<f64>) {
+        // Update stored cursor position
+        self.cursor_position = Some(position);
+
+        // Only update selection if we're currently selecting
+        if self.selection_state.selecting {
+            if let Some((col, row)) = self.pixel_to_grid(position.x, position.y) {
+                use crate::terminal::grid::Cursor;
+                self.selection_state.update_selection(Cursor::new(row, col));
+            }
+        }
+    }
+
+    /// Handle paste from clipboard (Ctrl+V or Shift+Insert)
+    fn handle_paste(&mut self) -> Result<()> {
+        if let Ok(text) = self.clipboard.paste() {
+            // Convert text to bytes and send to PTY
+            let bytes = text.as_bytes();
+            if !bytes.is_empty() {
+                self.send_pty_input(bytes);
+                tracing::debug!("Pasted {} bytes from clipboard", bytes.len());
+            }
+        }
+        Ok(())
+    }
 }
 
 impl ApplicationHandler for TerminalApp {
@@ -413,7 +519,12 @@ impl ApplicationHandler for TerminalApp {
         self.window = Some(window);
         self.renderer = Some(renderer);
         self.running = true;
-        
+
+        // Initialize clipboard (must be done from main thread)
+        if let Err(e) = self.clipboard.init() {
+            tracing::warn!("Failed to initialize clipboard: {}", e);
+        }
+
         tracing::info!("Terminal application started");
     }
     
@@ -429,15 +540,40 @@ impl ApplicationHandler for TerminalApp {
             }
             
             WindowEvent::KeyboardInput { event, .. } => {
-                let input = self.input_handler.handle_key_event(&event);
-                let data = input.to_bytes();
-                self.send_pty_input(&data);
+                // Check for paste shortcuts
+                let is_paste = match &event.logical_key {
+                    Key::Named(NamedKey::Paste) => true,
+                    Key::Character(c) if c == "v" || c == "V" => {
+                        self.input_handler.modifiers().ctrl
+                    }
+                    Key::Character(c) if c == "i" || c == "I" => {
+                        self.input_handler.modifiers().shift
+                    }
+                    _ => false,
+                };
+
+                if is_paste && event.state == ElementState::Pressed {
+                    let _ = self.handle_paste();
+                } else {
+                    let input = self.input_handler.handle_key_event(&event);
+                    let data = input.to_bytes();
+                    self.send_pty_input(&data);
+                }
             }
             
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.input_handler.modifiers_mut().update_from_state(modifiers.state());
+                self.modifiers = modifiers.state();
             }
-            
+
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.handle_mouse_button(DeviceId::dummy(), button, state);
+            }
+
+            WindowEvent::CursorMoved { position, .. } => {
+                self.handle_mouse_motion(position);
+            }
+
             WindowEvent::RedrawRequested => {
                 // Read and process any pending PTY output
                 self.read_pty_output();
