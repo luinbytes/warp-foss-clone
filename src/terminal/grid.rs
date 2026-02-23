@@ -441,6 +441,148 @@ impl TerminalGrid {
         self.cursor.row = (self.cursor.row + scroll_amount).min(self.rows.saturating_sub(1));
     }
 
+    /// Scroll a region of the screen up by n lines.
+    ///
+    /// Only lines within [top, bottom] are affected. Lines above `top` and
+    /// below `bottom` remain unchanged. The bottom `n` lines of the region
+    /// are cleared.
+    ///
+    /// # Arguments
+    /// * `n` - Number of lines to scroll
+    /// * `top` - Top boundary of scroll region (0-indexed, inclusive)
+    /// * `bottom` - Bottom boundary of scroll region (0-indexed, inclusive)
+    pub fn scroll_up_in_region(&mut self, n: usize, top: usize, bottom: usize) {
+        if n == 0 || self.rows == 0 || top >= bottom || bottom >= self.rows {
+            return;
+        }
+
+        let region_height = bottom - top + 1;
+        let scroll_amount = n.min(region_height);
+
+        // Save rows outside the region
+        let mut above_region: Vec<Vec<Cell>> = if top > 0 {
+            self.grid[0..top].to_vec()
+        } else {
+            Vec::new()
+        };
+
+        let mut in_region: Vec<Vec<Cell>> = self.grid[top..=bottom].to_vec();
+
+        // Shift region content up
+        in_region.drain(0..scroll_amount);
+
+        // Add blank lines at bottom of region
+        for _ in 0..scroll_amount {
+            in_region.push(vec![Cell::default(); self.cols]);
+        }
+
+        // Reconstruct grid
+        let mut new_grid = above_region;
+        new_grid.append(&mut in_region);
+        
+        // Add rows below region
+        if bottom + 1 < self.rows {
+            new_grid.extend_from_slice(&self.grid[bottom + 1..]);
+        }
+
+        self.grid = new_grid;
+    }
+
+    /// Scroll a region of the screen down by n lines.
+    ///
+    /// Only lines within [top, bottom] are affected. Lines above `top` and
+    /// below `bottom` remain unchanged. The top `n` lines of the region
+    /// are cleared.
+    ///
+    /// # Arguments
+    /// * `n` - Number of lines to scroll
+    /// * `top` - Top boundary of scroll region (0-indexed, inclusive)
+    /// * `bottom` - Bottom boundary of scroll region (0-indexed, inclusive)
+    pub fn scroll_down_in_region(&mut self, n: usize, top: usize, bottom: usize) {
+        if n == 0 || self.rows == 0 || top >= bottom || bottom >= self.rows {
+            return;
+        }
+
+        let region_height = bottom - top + 1;
+        let scroll_amount = n.min(region_height);
+
+        // Save rows outside the region
+        let mut above_region: Vec<Vec<Cell>> = if top > 0 {
+            self.grid[0..top].to_vec()
+        } else {
+            Vec::new()
+        };
+
+        let mut in_region: Vec<Vec<Cell>> = self.grid[top..=bottom].to_vec();
+
+        // Remove lines from bottom of region
+        let remove_from = in_region.len().saturating_sub(scroll_amount);
+        in_region.drain(remove_from..);
+
+        // Insert blank lines at top of region
+        for _ in 0..scroll_amount {
+            in_region.insert(0, vec![Cell::default(); self.cols]);
+        }
+
+        // Reconstruct grid
+        let mut new_grid = above_region;
+        new_grid.append(&mut in_region);
+        
+        // Add rows below region
+        if bottom + 1 < self.rows {
+            new_grid.extend_from_slice(&self.grid[bottom + 1..]);
+        }
+
+        self.grid = new_grid;
+    }
+
+    /// Perform a line feed within a scroll region.
+    ///
+    /// If cursor is at the bottom of the region, scroll the region up.
+    /// Otherwise, just move the cursor down.
+    pub fn linefeed_in_region(&mut self, top: usize, bottom: usize) {
+        if self.cursor.row == bottom {
+            // At bottom of region, scroll up
+            self.scroll_up_in_region(1, top, bottom);
+        } else if self.cursor.row < self.rows - 1 {
+            self.cursor.row += 1;
+        }
+    }
+
+    /// Erase in display with mode.
+    ///
+    /// Mode 0: Erase from cursor to end of screen
+    /// Mode 1: Erase from start of screen to cursor  
+    /// Mode 2: Erase entire screen
+    /// Mode 3: Erase entire screen and scrollback
+    pub fn erase_in_display(&mut self, mode: u16) {
+        match mode {
+            0 => self.clear_to_end_of_screen(),
+            1 => self.clear_to_start_of_screen(),
+            2 | 3 => {
+                self.clear_screen();
+                if mode == 3 {
+                    self.scrollback.clear();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Erase in line with mode.
+    ///
+    /// Mode 0: Erase from cursor to end of line
+    /// Mode 1: Erase from start of line to cursor
+    /// Mode 2: Erase entire line
+    pub fn erase_in_line(&mut self, mode: u16) {
+        match mode {
+            0 => self.clear_to_end_of_line(),
+            1 => self.clear_to_start_of_line(),
+            2 => self.clear_line(),
+            _ => {}
+        }
+    }
+
     /// Insert n blank lines at the cursor position.
     ///
     /// Lines below the cursor are shifted down, and lines that fall off
@@ -603,8 +745,8 @@ impl TerminalOutput for TerminalGrid {
         self.tab();
     }
 
-    fn linefeed(&mut self) {
-        self.linefeed();
+    fn linefeed_in_region(&mut self, top: usize, bottom: usize) {
+        self.linefeed_in_region(top, bottom);
     }
 
     fn carriage_return(&mut self) {
@@ -621,6 +763,22 @@ impl TerminalOutput for TerminalGrid {
 
     fn cursor_position(&self) -> (usize, usize) {
         (self.cursor.row, self.cursor.col)
+    }
+
+    fn scroll_up_in_region(&mut self, n: usize, top: usize, bottom: usize) {
+        self.scroll_up_in_region(n, top, bottom);
+    }
+
+    fn scroll_down_in_region(&mut self, n: usize, top: usize, bottom: usize) {
+        self.scroll_down_in_region(n, top, bottom);
+    }
+
+    fn erase_in_display(&mut self, mode: u16) {
+        self.erase_in_display(mode);
+    }
+
+    fn erase_in_line(&mut self, mode: u16) {
+        self.erase_in_line(mode);
     }
 }
 
@@ -1075,5 +1233,196 @@ mod tests {
                 assert!(cell.is_empty());
             }
         }
+    }
+
+    // ===== Scroll Region Tests =====
+
+    #[test]
+    fn test_scroll_up_in_region() {
+        let mut grid = TerminalGrid::with_size(5, 10);
+
+        // Fill grid with identifiable content (0-9)
+        for row in 0..10 {
+            grid.move_cursor(row, 0);
+            let ch = (b'0' + row as u8) as char;
+            for _ in 0..5 {
+                grid.put_char(ch);
+            }
+        }
+
+        // Scroll region 3-6 (0-indexed) up by 1
+        grid.scroll_up_in_region(1, 3, 6);
+
+        // Check rows outside region are unchanged
+        assert_eq!(grid.row_to_string(0), "00000");
+        assert_eq!(grid.row_to_string(1), "11111");
+        assert_eq!(grid.row_to_string(2), "22222");
+        
+        // Row 3 should now have content from row 4
+        assert_eq!(grid.row_to_string(3), "44444");
+        assert_eq!(grid.row_to_string(4), "55555");
+        assert_eq!(grid.row_to_string(5), "66666");
+        
+        // Row 6 (bottom of region) should be cleared
+        assert_eq!(grid.row_to_string(6), "     ");
+        
+        // Rows below region unchanged
+        assert_eq!(grid.row_to_string(7), "77777");
+        assert_eq!(grid.row_to_string(8), "88888");
+        assert_eq!(grid.row_to_string(9), "99999");
+    }
+
+    #[test]
+    fn test_scroll_down_in_region() {
+        let mut grid = TerminalGrid::with_size(5, 10);
+
+        // Fill grid with identifiable content (0-9)
+        for row in 0..10 {
+            grid.move_cursor(row, 0);
+            let ch = (b'0' + row as u8) as char;
+            for _ in 0..5 {
+                grid.put_char(ch);
+            }
+        }
+
+        // Scroll region 3-6 (0-indexed) down by 1
+        grid.scroll_down_in_region(1, 3, 6);
+
+        // Check rows outside region are unchanged
+        assert_eq!(grid.row_to_string(0), "00000");
+        assert_eq!(grid.row_to_string(1), "11111");
+        assert_eq!(grid.row_to_string(2), "22222");
+        
+        // Row 3 (top of region) should be cleared
+        assert_eq!(grid.row_to_string(3), "     ");
+        
+        // Rows 4-6 should have content from rows 3-5
+        assert_eq!(grid.row_to_string(4), "33333");
+        assert_eq!(grid.row_to_string(5), "44444");
+        assert_eq!(grid.row_to_string(6), "55555");
+        
+        // Rows below region unchanged
+        assert_eq!(grid.row_to_string(7), "77777");
+        assert_eq!(grid.row_to_string(8), "88888");
+        assert_eq!(grid.row_to_string(9), "99999");
+    }
+
+    #[test]
+    fn test_scroll_region_boundaries() {
+        let mut grid = TerminalGrid::with_size(5, 5);
+
+        // Fill grid
+        for row in 0..5 {
+            grid.move_cursor(row, 0);
+            let ch = (b'A' + row as u8) as char;
+            for _ in 0..5 {
+                grid.put_char(ch);
+            }
+        }
+
+        // Invalid: top >= bottom - should be no-op
+        grid.scroll_up_in_region(1, 3, 2);
+        assert_eq!(grid.row_to_string(0), "AAAAA");
+        assert_eq!(grid.row_to_string(3), "DDDDD");
+
+        // Invalid: n == 0 - should be no-op
+        grid.scroll_up_in_region(0, 0, 4);
+        assert_eq!(grid.row_to_string(0), "AAAAA");
+    }
+
+    #[test]
+    fn test_linefeed_in_region() {
+        let mut grid = TerminalGrid::with_size(5, 10);
+
+        // Fill region 2-5
+        for row in 2..=5 {
+            grid.move_cursor(row, 0);
+            let ch = (b'0' + row as u8) as char;
+            for _ in 0..5 {
+                grid.put_char(ch);
+            }
+        }
+
+        // Cursor at row 4, not at bottom of region
+        grid.move_cursor(4, 2);
+        grid.linefeed_in_region(2, 5);
+        
+        // Cursor should move down
+        assert_eq!(grid.cursor().row, 5);
+
+        // Cursor at bottom of region
+        grid.linefeed_in_region(2, 5);
+        
+        // Should scroll the region, cursor stays at row 5
+        assert_eq!(grid.cursor().row, 5);
+        
+        // Row 2 should now have row 3's content
+        assert_eq!(grid.row_to_string(2), "33333");
+    }
+
+    #[test]
+    fn test_erase_in_display_modes() {
+        let mut grid = TerminalGrid::with_size(5, 3);
+
+        // Fill grid
+        for row in 0..3 {
+            grid.move_cursor(row, 0);
+            let ch = (b'A' + row as u8) as char;
+            for _ in 0..5 {
+                grid.put_char(ch);
+            }
+        }
+
+        // Mode 0: erase from cursor to end
+        grid.move_cursor(1, 2);
+        grid.erase_in_display(0);
+        assert_eq!(grid.row_to_string(0), "AAAAA");  // Unchanged
+        assert_eq!(grid.row_to_string(1), "BB   ");  // Cleared from col 2
+        assert_eq!(grid.row_to_string(2), "     ");  // Entire row cleared
+
+        // Reset and test mode 1: erase from start to cursor
+        for row in 0..3 {
+            grid.move_cursor(row, 0);
+            let ch = (b'A' + row as u8) as char;
+            for _ in 0..5 {
+                grid.put_char(ch);
+            }
+        }
+        grid.move_cursor(1, 2);
+        grid.erase_in_display(1);
+        assert_eq!(grid.row_to_string(0), "     ");  // Entire row cleared
+        assert_eq!(grid.row_to_string(1), "   BB");  // Cleared up to col 2 (inclusive)
+        assert_eq!(grid.row_to_string(2), "CCCCC");  // Unchanged
+    }
+
+    #[test]
+    fn test_erase_in_line_modes() {
+        let mut grid = TerminalGrid::with_size(5, 3);
+
+        // Fill first row
+        grid.move_cursor(0, 0);
+        for c in "ABCDE".chars() {
+            grid.put_char(c);
+        }
+
+        // Mode 0: erase from cursor to end of line
+        grid.move_cursor(0, 2);
+        grid.erase_in_line(0);
+        assert_eq!(grid.row_to_string(0), "AB   ");
+
+        // Reset
+        grid.move_cursor(0, 0);
+        for c in "ABCDE".chars() {
+            grid.put_char(c);
+        }
+
+        // Mode 1: erase from start to cursor
+        grid.move_cursor(0, 2);
+        grid.erase_in_line(1);
+        assert_eq!(grid.row_to_string(0), "   DE");
+
+        // Mode 2: erase entire line
+        grid.erase_in_line(2);
+        assert_eq!(grid.row_to_string(0), "     ");
     }
 }
