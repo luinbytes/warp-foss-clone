@@ -390,7 +390,7 @@ impl TerminalApp {
     /// Render a frame
     fn render(&mut self) {
         if let Some(ref mut renderer) = self.renderer {
-            if let Err(e) = renderer.render() {
+            if let Err(e) = renderer.render_grid(&self.grid) {
                 tracing::error!("Render error: {}", e);
             }
         }
