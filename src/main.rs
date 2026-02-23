@@ -241,8 +241,6 @@ impl RendererHolder {
         &mut self,
         grid: &terminal::grid::TerminalGrid,
     ) -> Result<(), ui::renderer::RendererError> {
-        
-
         // Clear previous frame's text
         self.text_renderer.clear();
 
