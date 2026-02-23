@@ -142,6 +142,7 @@ impl Default for SelectionRegion {
 
 /// Selection state
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub struct SelectionState {
     /// Current selection region (if any)
     pub region: SelectionRegion,
@@ -151,15 +152,6 @@ pub struct SelectionState {
     pub mouse_mode: MouseMode,
 }
 
-impl Default for SelectionState {
-    fn default() -> Self {
-        Self {
-            region: SelectionRegion::empty(),
-            selecting: false,
-            mouse_mode: MouseMode::default(),
-        }
-    }
-}
 
 impl SelectionState {
     /// Create a new selection state
@@ -268,8 +260,7 @@ pub fn extract_selected_text(grid: &[Vec<Cell>], selection: &SelectionRegion) ->
             actual_end
         };
 
-        for col in final_start..=final_end {
-            let cell = &row_data[col];
+        for cell in row_data.iter().take(final_end + 1).skip(final_start) {
             result.push(cell.char);
         }
 
@@ -312,8 +303,7 @@ pub fn extract_selected_text_preserve_ws(
 
         let actual_end = effective_end.min(row_data.len().saturating_sub(1));
 
-        for col in effective_start..=actual_end {
-            let cell = &row_data[col];
+        for cell in row_data.iter().take(actual_end + 1).skip(effective_start) {
             result.push(cell.char);
         }
 

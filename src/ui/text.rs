@@ -576,6 +576,7 @@ impl TextRenderer {
     }
 
     /// Queue a character for rendering.
+    #[allow(clippy::too_many_arguments)]
     pub fn queue_char(
         &mut self,
         c: char,
