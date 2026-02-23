@@ -203,7 +203,7 @@ impl RendererHolder {
             });
 
         {
-            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
@@ -222,8 +222,13 @@ impl RendererHolder {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            // Note: We'll draw actual geometry here later
-            // For now, just clearing to dark background
+
+            // Render text if we have bind group and vertices
+            if let Some(ref bind_group) = self.text_bind_group {
+                if self.text_renderer.vertex_count() > 0 {
+                    self.text_renderer.render(&mut render_pass, bind_group);
+                }
+            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -232,8 +237,11 @@ impl RendererHolder {
         Ok(())
     }
 
-    fn render_grid(&mut self, grid: &terminal::grid::TerminalGrid) -> Result<(), ui::renderer::RendererError> {
-        use ui::renderer::RendererError;
+    fn render_grid(
+        &mut self,
+        grid: &terminal::grid::TerminalGrid,
+    ) -> Result<(), ui::renderer::RendererError> {
+        
 
         // Clear previous frame's text
         self.text_renderer.clear();
