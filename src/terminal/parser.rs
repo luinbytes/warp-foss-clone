@@ -145,6 +145,8 @@ pub struct ParserState {
     pub origin_mode: bool,
     /// Pending device status responses waiting to be sent back
     pub pending_responses: Vec<DeviceStatusResponse>,
+    /// Total number of rows in terminal (for scroll region calculations)
+    rows: usize,
 }
 
 impl Default for ParserState {
@@ -163,6 +165,7 @@ impl Default for ParserState {
             saved_scroll_region_bottom: 23,
             origin_mode: false,
             pending_responses: Vec::new(),
+            rows: 24, // Default 24-line terminal
         }
     }
 }
@@ -170,13 +173,14 @@ impl Default for ParserState {
 impl ParserState {
     /// Initialize scroll region with terminal size
     pub fn set_terminal_size(&mut self, rows: usize) {
+        self.rows = rows;
         self.scroll_region_bottom = rows.saturating_sub(1);
         self.saved_scroll_region_bottom = self.scroll_region_bottom;
     }
 
     /// Check if a custom scroll region is active (different from full screen)
     pub fn has_scroll_region(&self) -> bool {
-        self.scroll_region_top != 0 || self.scroll_region_bottom != self.scroll_region_bottom
+        self.scroll_region_top != 0 || self.scroll_region_bottom != self.rows.saturating_sub(1)
     }
 
     /// Check if cursor is within the scroll region
