@@ -98,11 +98,19 @@ impl PtyWriter {
 /// Reader handle for receiving output from the PTY
 pub struct PtyReader {
     reader: Box<dyn Read + Send>,
+    /// Buffer for batched reads
+    read_buffer: Vec<u8>,
+    /// Position in read_buffer
+    read_pos: usize,
 }
 
 impl PtyReader {
     fn new(reader: Box<dyn Read + Send>) -> Self {
-        Self { reader }
+        Self {
+            reader,
+            read_buffer: Vec::with_capacity(8192),
+            read_pos: 0,
+        }
     }
 
     /// Read data from the PTY (receives output from the shell)
@@ -118,6 +126,54 @@ impl PtyReader {
         let n = self.read(&mut buffer)?;
         buffer.truncate(n);
         Ok(buffer)
+    }
+
+    /// Read and accumulate data into the internal buffer for batched processing.
+    ///
+    /// This reads available data from the PTY and stores it in an internal buffer.
+    /// Use `take_batch()` to retrieve the accumulated data.
+    pub fn read_batch(&mut self) -> PtyResult<usize> {
+        let mut temp_buf = [0u8; 4096];
+        match self.read(&mut temp_buf) {
+            Ok(0) => Ok(0), // EOF
+            Ok(n) => {
+                // Append to internal buffer
+                self.read_buffer.extend_from_slice(&temp_buf[..n]);
+                Ok(n)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Take all accumulated batched data and clear the internal buffer.
+    ///
+    /// Returns the accumulated bytes and clears the buffer for the next batch.
+    pub fn take_batch(&mut self) -> Vec<u8> {
+        if self.read_pos > 0 {
+            // Shift remaining data to front
+            let remaining = self.read_buffer.split_off(self.read_pos);
+            let result = std::mem::replace(&mut self.read_buffer, remaining);
+            self.read_pos = 0;
+            result
+        } else {
+            std::mem::take(&mut self.read_buffer)
+        }
+    }
+
+    /// Check if there is accumulated batched data available.
+    pub fn has_batched_data(&self) -> bool {
+        self.read_pos < self.read_buffer.len()
+    }
+
+    /// Get the amount of batched data currently accumulated.
+    pub fn batched_len(&self) -> usize {
+        self.read_buffer.len() - self.read_pos
+    }
+
+    /// Clear the internal batch buffer without processing.
+    pub fn clear_batch(&mut self) {
+        self.read_buffer.clear();
+        self.read_pos = 0;
     }
 }
 

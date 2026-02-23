@@ -1809,4 +1809,166 @@ mod tests {
         assert!(parser.attributes().italic);
         assert_eq!(parser.foreground_color(), Color::Indexed(4)); // Blue
     }
+
+    #[test]
+    fn test_true_color_foreground() {
+        let mut parser = TerminalParser::new();
+
+        // Set foreground to true color red (CSI 38;2;255;0;0 m)
+        parser.parse_bytes(b"\x1B[38;2;255;0;0m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(255, 0, 0));
+
+        // Set foreground to true color green (CSI 38;2;0;255;0 m)
+        parser.parse_bytes(b"\x1B[38;2;0;255;0m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(0, 255, 0));
+
+        // Set foreground to true color blue (CSI 38;2;0;0;255 m)
+        parser.parse_bytes(b"\x1B[38;2;0;0;255m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(0, 0, 255));
+
+        // Set foreground to true color custom (CSI 38;2;128;64;192 m)
+        parser.parse_bytes(b"\x1B[38;2;128;64;192m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(128, 64, 192));
+
+        // Set foreground to white (full intensity)
+        parser.parse_bytes(b"\x1B[38;2;255;255;255m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(255, 255, 255));
+
+        // Set foreground to black
+        parser.parse_bytes(b"\x1B[38;2;0;0;0m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(0, 0, 0));
+    }
+
+    #[test]
+    fn test_true_color_background() {
+        let mut parser = TerminalParser::new();
+
+        // Set background to true color red (CSI 48;2;255;0;0 m)
+        parser.parse_bytes(b"\x1B[48;2;255;0;0m");
+        assert_eq!(parser.background_color(), Color::Rgb(255, 0, 0));
+
+        // Set background to true color green (CSI 48;2;0;255;0 m)
+        parser.parse_bytes(b"\x1B[48;2;0;255;0m");
+        assert_eq!(parser.background_color(), Color::Rgb(0, 255, 0));
+
+        // Set background to true color blue (CSI 48;2;0;0;255 m)
+        parser.parse_bytes(b"\x1B[48;2;0;0;255m");
+        assert_eq!(parser.background_color(), Color::Rgb(0, 0, 255));
+
+        // Set background to true color custom (CSI 48;2;64;128;200 m)
+        parser.parse_bytes(b"\x1B[48;2;64;128;200m");
+        assert_eq!(parser.background_color(), Color::Rgb(64, 128, 200));
+    }
+
+    #[test]
+    fn test_true_color_mixed_with_indexed() {
+        let mut parser = TerminalParser::new();
+
+        // Start with indexed color
+        parser.parse_bytes(b"\x1B[31m"); // Red
+        assert_eq!(parser.foreground_color(), Color::Indexed(1));
+
+        // Switch to true color
+        parser.parse_bytes(b"\x1B[38;2;100;150;200m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(100, 150, 200));
+
+        // Switch back to indexed
+        parser.parse_bytes(b"\x1B[34m"); // Blue
+        assert_eq!(parser.foreground_color(), Color::Indexed(4));
+
+        // Switch to true color again
+        parser.parse_bytes(b"\x1B[38;2;255;100;50m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(255, 100, 50));
+    }
+
+    #[test]
+    fn test_true_color_background_mixed() {
+        let mut parser = TerminalParser::new();
+
+        // Start with indexed background
+        parser.parse_bytes(b"\x1B[41m"); // Red background
+        assert_eq!(parser.background_color(), Color::Indexed(1));
+
+        // Switch to true color background
+        parser.parse_bytes(b"\x1B[48;2;200;150;100m");
+        assert_eq!(parser.background_color(), Color::Rgb(200, 150, 100));
+
+        // Switch back to indexed
+        parser.parse_bytes(b"\x1B[44m"); // Blue background
+        assert_eq!(parser.background_color(), Color::Indexed(4));
+    }
+
+    #[test]
+    fn test_true_color_combined_with_attributes() {
+        let mut parser = TerminalParser::new();
+
+        // Set attributes and true color together
+        parser.parse_bytes(b"\x1B[1;38;2;255;0;0m"); // Bold + true color red
+        assert!(parser.attributes().bold);
+        assert_eq!(parser.foreground_color(), Color::Rgb(255, 0, 0));
+
+        // Add more attributes and change color
+        parser.parse_bytes(b"\x1B[3;4;38;2;0;255;0m"); // Italic + underline + true color green
+        assert!(parser.attributes().italic);
+        assert!(parser.attributes().underline);
+        assert_eq!(parser.foreground_color(), Color::Rgb(0, 255, 0));
+    }
+
+    #[test]
+    fn test_true_color_fg_bg_separate() {
+        let mut parser = TerminalParser::new();
+
+        // Set both foreground and background to different true colors
+        parser.parse_bytes(b"\x1B[38;2;255;200;100;48;2;50;75;100m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(255, 200, 100));
+        assert_eq!(parser.background_color(), Color::Rgb(50, 75, 100));
+
+        // Change only foreground
+        parser.parse_bytes(b"\x1B[38;2;0;255;255m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(0, 255, 255));
+        assert_eq!(parser.background_color(), Color::Rgb(50, 75, 100));
+
+        // Change only background
+        parser.parse_bytes(b"\x1B[48;2;255;0;255m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(0, 255, 255));
+        assert_eq!(parser.background_color(), Color::Rgb(255, 0, 255));
+    }
+
+    #[test]
+    fn test_true_color_reset() {
+        let mut parser = TerminalParser::new();
+
+        // Set true color foreground
+        parser.parse_bytes(b"\x1B[38;2;100;200;50m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(100, 200, 50));
+
+        // Reset foreground to default (CSI 39 m)
+        parser.parse_bytes(b"\x1B[39m");
+        assert_eq!(parser.foreground_color(), Color::Default);
+
+        // Set true color background
+        parser.parse_bytes(b"\x1B[48;2;150;100;200m");
+        assert_eq!(parser.background_color(), Color::Rgb(150, 100, 200));
+
+        // Reset background to default (CSI 49 m)
+        parser.parse_bytes(b"\x1B[49m");
+        assert_eq!(parser.background_color(), Color::Default);
+    }
+
+    #[test]
+    fn test_true_color_edge_cases() {
+        let mut parser = TerminalParser::new();
+
+        // Test minimum values (0, 0, 0)
+        parser.parse_bytes(b"\x1B[38;2;0;0;0m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(0, 0, 0));
+
+        // Test maximum values (255, 255, 255)
+        parser.parse_bytes(b"\x1B[38;2;255;255;255m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(255, 255, 255));
+
+        // Test mid-range values (127, 127, 127)
+        parser.parse_bytes(b"\x1B[38;2;127;127;127m");
+        assert_eq!(parser.foreground_color(), Color::Rgb(127, 127, 127));
+    }
 }

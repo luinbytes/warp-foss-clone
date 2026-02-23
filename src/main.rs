@@ -235,60 +235,89 @@ impl TerminalApp {
         Ok(())
     }
     
-    /// Read and process PTY output (non-blocking)
+    /// Read and process PTY output (non-blocking with batching)
     fn read_pty_output(&mut self) {
-        // First read data from PTY
-        let data = {
-            if let Some(ref pty) = self.pty {
-                if let Ok(mut session) = pty.lock() {
-                    // Use heap-allocated buffer to avoid stack pressure on Windows
-                    let mut buf = vec![0u8; 4096];
-                    match session.read(&mut buf) {
-                        Ok(0) => {
-                            // EOF - PTY closed
-                            tracing::info!("PTY closed");
-                            self.running = false;
-                            return;
-                        }
-                        Ok(n) => {
-                            buf.truncate(n);
-                            Some(buf)
-                        }
-                        Err(e) => {
-                            // Would block is expected when no data available
-                            let err_str = e.to_string();
-                            if !err_str.contains("Would block") && !err_str.contains("Resource temporarily unavailable") {
-                                tracing::debug!("PTY read error: {}", e);
+        // Batch read from PTY - accumulate multiple reads before processing
+        let mut data = Vec::with_capacity(16384); // Start with 16KB capacity
+
+        // Try to read multiple times to batch available data
+        let mut has_data = false;
+        for _ in 0..5 {
+            // Attempt to read more data (limit to 5 attempts to avoid blocking)
+            let read_result = {
+                if let Some(ref pty) = self.pty {
+                    if let Ok(mut session) = pty.lock() {
+                        let mut buf = vec![0u8; 4096];
+                        match session.read(&mut buf) {
+                            Ok(0) => {
+                                // EOF - PTY closed
+                                tracing::info!("PTY closed");
+                                self.running = false;
+                                return;
                             }
-                            None
+                            Ok(n) => {
+                                buf.truncate(n);
+                                (true, Some(buf))
+                            }
+                            Err(e) => {
+                                // Would block is expected when no data available
+                                let err_str = e.to_string();
+                                if !err_str.contains("Would block") && !err_str.contains("Resource temporarily unavailable") {
+                                    tracing::debug!("PTY read error: {}", e);
+                                }
+                                // No more data available
+                                break;
+                            }
                         }
+                    } else {
+                        (false, None)
                     }
                 } else {
-                    None
+                    (false, None)
                 }
-            } else {
-                None
-            }
-        };
+            };
 
-        // Process the data after releasing the lock
-        if let Some(data) = data {
+            match read_result {
+                (_, Some(buf)) if !buf.is_empty() => {
+                    data.extend_from_slice(&buf);
+                    has_data = true;
+                }
+                (_, None) => {
+                    break; // No more data or error
+                }
+                _ => {
+                    break;
+                }
+            }
+        }
+
+        // Process the data if we accumulated any
+        if has_data && !data.is_empty() {
             self.process_terminal_output(&data);
         }
     }
     
     /// Process terminal output bytes through the parser to the grid.
-    /// 
+    ///
     /// This is the main pipeline: PTY bytes → Parser (escape sequences) → Grid (screen buffer)
+    ///
+    /// Uses batch mode to optimize grid updates when processing large amounts of data.
     fn process_terminal_output(&mut self, data: &[u8]) {
         // Sync grid colors/attributes from parser state before processing
         self.grid.set_foreground(self.parser.state.fg_color);
         self.grid.set_background(self.parser.state.bg_color);
         self.grid.set_attributes(self.parser.state.attributes);
-        
+
+        // Use batch mode for grid updates to reduce overhead
+        // This buffers all cell updates and applies them in a single pass
+        self.grid.begin_batch();
+
         // Parse bytes and output directly to the grid
         // This handles escape sequences and writes characters to the grid
         self.parser.parse_bytes_with_output(data, &mut self.grid);
+
+        // Flush batched updates and calculate dirty region
+        self.grid.flush_batch();
     }
     
     /// Send input to the PTY

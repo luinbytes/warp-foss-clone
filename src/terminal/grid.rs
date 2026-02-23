@@ -103,6 +103,115 @@ impl Cursor {
 /// A row in the scrollback buffer.
 type ScrollbackRow = Vec<Cell>;
 
+/// Represents a dirty region in the grid that needs to be redrawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirtyRegion {
+    /// Top row of dirty region (inclusive)
+    pub top: usize,
+    /// Bottom row of dirty region (inclusive)
+    pub bottom: usize,
+    /// Left column of dirty region (inclusive)
+    pub left: usize,
+    /// Right column of dirty region (inclusive)
+    pub right: usize,
+    /// Whether the entire screen is dirty
+    pub full_screen: bool,
+}
+
+impl DirtyRegion {
+    /// Create a new dirty region for a single cell
+    pub fn single_cell(row: usize, col: usize) -> Self {
+        Self {
+            top: row,
+            bottom: row,
+            left: col,
+            right: col,
+            full_screen: false,
+        }
+    }
+
+    /// Create a dirty region for an entire row
+    pub fn full_row(row: usize, cols: usize) -> Self {
+        Self {
+            top: row,
+            bottom: row,
+            left: 0,
+            right: cols.saturating_sub(1),
+            full_screen: false,
+        }
+    }
+
+    /// Mark the entire screen as dirty
+    pub fn full_screen() -> Self {
+        Self {
+            top: 0,
+            bottom: 0,
+            left: 0,
+            right: 0,
+            full_screen: true,
+        }
+    }
+
+    /// Check if the region is empty (no dirty cells)
+    pub fn is_empty(&self) -> bool {
+        !self.full_screen && self.top > self.bottom
+    }
+
+    /// Reset the dirty region to empty
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Expand this dirty region to include another region
+    pub fn merge(&mut self, other: &DirtyRegion) {
+        if other.full_screen {
+            *self = DirtyRegion::full_screen();
+            return;
+        }
+        if self.full_screen {
+            return;
+        }
+        if other.is_empty() {
+            return;
+        }
+        if self.is_empty() {
+            *self = *other;
+            return;
+        }
+        self.top = self.top.min(other.top);
+        self.bottom = self.bottom.max(other.bottom);
+        self.left = self.left.min(other.left);
+        self.right = self.right.max(other.right);
+    }
+
+    /// Expand this dirty region to include a cell
+    pub fn include_cell(&mut self, row: usize, col: usize) {
+        if self.full_screen {
+            return;
+        }
+        if self.is_empty() {
+            *self = DirtyRegion::single_cell(row, col);
+            return;
+        }
+        self.top = self.top.min(row);
+        self.bottom = self.bottom.max(row);
+        self.left = self.left.min(col);
+        self.right = self.right.max(col);
+    }
+}
+
+impl Default for DirtyRegion {
+    fn default() -> Self {
+        Self {
+            top: 1,
+            bottom: 0,
+            left: 0,
+            right: 0,
+            full_screen: false,
+        }
+    }
+}
+
 /// Terminal screen buffer with scrollback history.
 ///
 /// This struct manages a 2D grid of cells representing the visible terminal
@@ -127,6 +236,12 @@ pub struct TerminalGrid {
     fg_color: Color,
     /// Current background color.
     bg_color: Color,
+    /// Dirty region tracking for efficient rendering
+    dirty_region: DirtyRegion,
+    /// Whether batch updates are currently enabled
+    batch_updates: bool,
+    /// Pending cell updates during batch mode
+    batch_buffer: Vec<(usize, usize, Cell)>,
 }
 
 impl TerminalGrid {
@@ -151,6 +266,9 @@ impl TerminalGrid {
             attributes: TextAttributes::default(),
             fg_color: Color::Default,
             bg_color: Color::Default,
+            dirty_region: DirtyRegion::full_screen(),
+            batch_updates: false,
+            batch_buffer: Vec::new(),
         }
     }
 
@@ -171,6 +289,9 @@ impl TerminalGrid {
             attributes: TextAttributes::default(),
             fg_color: Color::Default,
             bg_color: Color::Default,
+            dirty_region: DirtyRegion::full_screen(),
+            batch_updates: false,
+            batch_buffer: Vec::new(),
         }
     }
 
@@ -256,11 +377,13 @@ impl TerminalGrid {
 
         // Write the character at current cursor position
         if self.cursor.row < self.rows && self.cursor.col < self.cols {
-            let cell = &mut self.grid[self.cursor.row][self.cursor.col];
-            cell.char = c;
-            cell.fg_color = self.fg_color;
-            cell.bg_color = self.bg_color;
-            cell.attributes = self.attributes;
+            let cell = Cell {
+                char: c,
+                fg_color: self.fg_color,
+                bg_color: self.bg_color,
+                attributes: self.attributes,
+            };
+            self.apply_cell_update(self.cursor.row, self.cursor.col, cell);
         }
 
         // Advance cursor
@@ -270,11 +393,13 @@ impl TerminalGrid {
     /// Put a character without advancing the cursor.
     pub fn put_char_at(&mut self, row: usize, col: usize, c: char) {
         if row < self.rows && col < self.cols {
-            let cell = &mut self.grid[row][col];
-            cell.char = c;
-            cell.fg_color = self.fg_color;
-            cell.bg_color = self.bg_color;
-            cell.attributes = self.attributes;
+            let cell = Cell {
+                char: c,
+                fg_color: self.fg_color,
+                bg_color: self.bg_color,
+                attributes: self.attributes,
+            };
+            self.apply_cell_update(row, col, cell);
         }
     }
 
@@ -324,6 +449,8 @@ impl TerminalGrid {
         }
         // Also clear scrollback when clearing screen
         self.scrollback.clear();
+        // Mark entire screen as dirty
+        self.mark_full_dirty();
     }
 
     /// Clear the screen but preserve scrollback.
@@ -333,6 +460,8 @@ impl TerminalGrid {
                 cell.reset();
             }
         }
+        // Mark entire screen as dirty
+        self.mark_full_dirty();
     }
 
     /// Clear from cursor to end of screen.
@@ -346,6 +475,8 @@ impl TerminalGrid {
                 cell.reset();
             }
         }
+        // Mark region as dirty
+        self.mark_region_dirty(self.cursor.row, self.rows - 1, 0, self.cols - 1);
     }
 
     /// Clear from start of screen to cursor.
@@ -359,6 +490,8 @@ impl TerminalGrid {
 
         // Clear from start of current line to cursor
         self.clear_to_start_of_line();
+        // Mark region as dirty
+        self.mark_region_dirty(0, self.cursor.row, 0, self.cursor.col);
     }
 
     /// Clear the current line.
@@ -367,6 +500,8 @@ impl TerminalGrid {
             for cell in &mut self.grid[self.cursor.row] {
                 cell.reset();
             }
+            // Mark row as dirty
+            self.mark_region_dirty(self.cursor.row, self.cursor.row, 0, self.cols - 1);
         }
     }
 
@@ -376,6 +511,8 @@ impl TerminalGrid {
             for col_idx in self.cursor.col..self.cols {
                 self.grid[self.cursor.row][col_idx].reset();
             }
+            // Mark region as dirty
+            self.mark_region_dirty(self.cursor.row, self.cursor.row, self.cursor.col, self.cols - 1);
         }
     }
 
@@ -385,6 +522,8 @@ impl TerminalGrid {
             for col_idx in 0..=self.cursor.col.min(self.cols - 1) {
                 self.grid[self.cursor.row][col_idx].reset();
             }
+            // Mark region as dirty
+            self.mark_region_dirty(self.cursor.row, self.cursor.row, 0, self.cursor.col);
         }
     }
 
@@ -416,6 +555,9 @@ impl TerminalGrid {
         for _ in 0..scroll_amount {
             self.grid.push(vec![Cell::default(); self.cols]);
         }
+
+        // Mark entire screen as dirty after scroll
+        self.mark_full_dirty();
     }
 
     /// Scroll the screen down by n lines.
@@ -439,6 +581,9 @@ impl TerminalGrid {
 
         // Adjust cursor position
         self.cursor.row = (self.cursor.row + scroll_amount).min(self.rows.saturating_sub(1));
+
+        // Mark entire screen as dirty after scroll
+        self.mark_full_dirty();
     }
 
     /// Scroll a region of the screen up by n lines.
@@ -486,6 +631,9 @@ impl TerminalGrid {
         }
 
         self.grid = new_grid;
+
+        // Mark the scrolled region as dirty
+        self.mark_region_dirty(top, bottom, 0, self.cols - 1);
     }
 
     /// Scroll a region of the screen down by n lines.
@@ -534,6 +682,9 @@ impl TerminalGrid {
         }
 
         self.grid = new_grid;
+
+        // Mark the scrolled region as dirty
+        self.mark_region_dirty(top, bottom, 0, self.cols - 1);
     }
 
     /// Perform a line feed within a scroll region.
@@ -710,6 +861,105 @@ impl TerminalGrid {
         self.attributes = TextAttributes::default();
         self.fg_color = Color::Default;
         self.bg_color = Color::Default;
+    }
+
+    // ===== Dirty Region Tracking =====
+
+    /// Get the current dirty region.
+    pub fn dirty_region(&self) -> &DirtyRegion {
+        &self.dirty_region
+    }
+
+    /// Check if there are any dirty regions to render.
+    pub fn has_dirty_regions(&self) -> bool {
+        !self.dirty_region.is_empty()
+    }
+
+    /// Clear the dirty region (mark everything as clean).
+    pub fn clear_dirty(&mut self) {
+        self.dirty_region.clear();
+    }
+
+    /// Mark the entire screen as dirty.
+    pub fn mark_full_dirty(&mut self) {
+        self.dirty_region = DirtyRegion::full_screen();
+    }
+
+    /// Mark a specific cell as dirty.
+    fn mark_cell_dirty(&mut self, row: usize, col: usize) {
+        if self.batch_updates {
+            // During batch mode, defer dirty tracking
+            return;
+        }
+        self.dirty_region.include_cell(row, col);
+    }
+
+    /// Mark a region as dirty.
+    fn mark_region_dirty(&mut self, top: usize, bottom: usize, left: usize, right: usize) {
+        if self.batch_updates {
+            // During batch mode, defer dirty tracking
+            return;
+        }
+        self.dirty_region.merge(&DirtyRegion {
+            top,
+            bottom,
+            left,
+            right,
+            full_screen: false,
+        });
+    }
+
+    // ===== Batch Updates =====
+
+    /// Start batch update mode.
+    ///
+    /// While in batch mode, dirty region tracking is deferred and cell updates
+    /// are buffered. Call `flush_batch()` to apply all updates and calculate the
+    /// final dirty region.
+    pub fn begin_batch(&mut self) {
+        self.batch_updates = true;
+        self.batch_buffer.clear();
+    }
+
+    /// End batch update mode and flush all pending updates.
+    ///
+    /// This applies all buffered cell updates and calculates the dirty region
+    /// covering all modified cells.
+    pub fn flush_batch(&mut self) {
+        self.batch_updates = false;
+
+        // Apply all buffered updates
+        for (row, col, cell) in self.batch_buffer.drain(..) {
+            if row < self.rows && col < self.cols {
+                self.grid[row][col] = cell;
+                self.dirty_region.include_cell(row, col);
+            }
+        }
+    }
+
+    /// Cancel batch update mode without applying updates.
+    pub fn cancel_batch(&mut self) {
+        self.batch_updates = false;
+        self.batch_buffer.clear();
+    }
+
+    /// Check if currently in batch mode.
+    pub fn is_in_batch_mode(&self) -> bool {
+        self.batch_updates
+    }
+
+    /// Internal method to apply a cell update (respects batch mode)
+    fn apply_cell_update(&mut self, row: usize, col: usize, cell: Cell) {
+        if self.batch_updates {
+            // Buffer the update
+            self.batch_buffer.push((row, col, cell));
+        } else {
+            // Apply immediately
+            if row < self.rows && col < self.cols {
+                self.grid[row][col] = cell;
+                self.mark_cell_dirty(row, col);
+            }
+        }
     }
 }
 
