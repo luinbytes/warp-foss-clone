@@ -86,6 +86,8 @@ struct RendererHolder {
     queue: wgpu::Queue,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
+    text_renderer: ui::text::TextRenderer,
+    text_bind_group: Option<wgpu::BindGroup>,
 }
 
 impl RendererHolder {
@@ -157,11 +159,20 @@ impl RendererHolder {
 
         surface.configure(&device, &config);
 
+        // Create text renderer
+        let window_size = (size.width, size.height);
+        let text_renderer = ui::text::TextRenderer::new(&device, 16.0, window_size)?;
+
+        // Create bind group for text
+        let text_bind_group = text_renderer.create_bind_group(&device);
+
         Ok(Self {
             device,
             queue,
             surface,
             config,
+            text_renderer,
+            text_bind_group,
         })
     }
 
@@ -219,6 +230,51 @@ impl RendererHolder {
         output.present();
 
         Ok(())
+    }
+
+    fn render_grid(&mut self, grid: &terminal::grid::TerminalGrid) -> Result<(), ui::renderer::RendererError> {
+        use ui::renderer::RendererError;
+
+        // Clear previous frame's text
+        self.text_renderer.clear();
+
+        // Calculate cell dimensions
+        let font_size = self.text_renderer.font_size();
+        let cell_width = font_size * 0.6; // Approximate monospace character width
+        let cell_height = font_size;
+
+        // Render all visible cells
+        let rows = grid.rows();
+        let cols = grid.cols();
+
+        for row in 0..rows {
+            for col in 0..cols {
+                if let Some(cell) = grid.get_cell(row, col) {
+                    if cell.char != ' ' {
+                        let x = col as f32 * cell_width;
+                        let y = row as f32 * cell_height;
+
+                        self.text_renderer.queue_char(
+                            cell.char,
+                            x,
+                            y,
+                            cell.fg_color,
+                            cell.bg_color,
+                            cell.attributes.bold,
+                            cell.attributes.italic,
+                            cell.attributes.underline,
+                            cell.attributes.blink,
+                        )?;
+                    }
+                }
+            }
+        }
+
+        // Prepare text renderer (upload glyph atlas and vertex data)
+        self.text_renderer.prepare(&self.device, &self.queue);
+
+        // Clear screen first, then render text
+        self.render()
     }
 }
 
