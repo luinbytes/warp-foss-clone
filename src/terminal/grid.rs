@@ -460,7 +460,7 @@ impl TerminalGrid {
         let scroll_amount = n.min(region_height);
 
         // Save rows outside the region
-        let mut above_region: Vec<Vec<Cell>> = if top > 0 {
+        let above_region: Vec<Vec<Cell>> = if top > 0 {
             self.grid[0..top].to_vec()
         } else {
             Vec::new()
@@ -507,7 +507,7 @@ impl TerminalGrid {
         let scroll_amount = n.min(region_height);
 
         // Save rows outside the region
-        let mut above_region: Vec<Vec<Cell>> = if top > 0 {
+        let above_region: Vec<Vec<Cell>> = if top > 0 {
             self.grid[0..top].to_vec()
         } else {
             Vec::new()
@@ -1424,5 +1424,226 @@ mod tests {
         // Mode 2: erase entire line
         grid.erase_in_line(2);
         assert_eq!(grid.row_to_string(0), "     ");
+    }
+
+    // ===== Text Attribute Tests =====
+
+    #[test]
+    fn test_cell_with_attributes() {
+        let mut attrs = TextAttributes::default();
+        attrs.bold = true;
+        attrs.italic = true;
+        attrs.underline = true;
+        attrs.blink = true;
+
+        let cell = Cell::with_attributes('X', Color::Indexed(1), Color::Indexed(0), attrs);
+
+        assert_eq!(cell.char, 'X');
+        assert_eq!(cell.fg_color, Color::Indexed(1));
+        assert_eq!(cell.bg_color, Color::Indexed(0));
+        assert!(cell.attributes.bold);
+        assert!(cell.attributes.italic);
+        assert!(cell.attributes.underline);
+        assert!(cell.attributes.blink);
+    }
+
+    #[test]
+    fn test_put_char_with_bold() {
+        let mut grid = TerminalGrid::new();
+        let mut attrs = TextAttributes::default();
+        attrs.bold = true;
+        grid.set_attributes(attrs);
+
+        grid.put_char('B');
+        let cell = grid.get_cell(0, 0).unwrap();
+        assert!(cell.attributes.bold);
+        assert_eq!(cell.char, 'B');
+    }
+
+    #[test]
+    fn test_put_char_with_italic() {
+        let mut grid = TerminalGrid::new();
+        let mut attrs = TextAttributes::default();
+        attrs.italic = true;
+        grid.set_attributes(attrs);
+
+        grid.put_char('I');
+        let cell = grid.get_cell(0, 0).unwrap();
+        assert!(cell.attributes.italic);
+        assert_eq!(cell.char, 'I');
+    }
+
+    #[test]
+    fn test_put_char_with_underline() {
+        let mut grid = TerminalGrid::new();
+        let mut attrs = TextAttributes::default();
+        attrs.underline = true;
+        grid.set_attributes(attrs);
+
+        grid.put_char('U');
+        let cell = grid.get_cell(0, 0).unwrap();
+        assert!(cell.attributes.underline);
+        assert_eq!(cell.char, 'U');
+    }
+
+    #[test]
+    fn test_put_char_with_blink() {
+        let mut grid = TerminalGrid::new();
+        let mut attrs = TextAttributes::default();
+        attrs.blink = true;
+        grid.set_attributes(attrs);
+
+        grid.put_char('B');
+        let cell = grid.get_cell(0, 0).unwrap();
+        assert!(cell.attributes.blink);
+        assert_eq!(cell.char, 'B');
+    }
+
+    #[test]
+    fn test_put_char_with_all_attributes() {
+        let mut grid = TerminalGrid::new();
+        let mut attrs = TextAttributes::default();
+        attrs.bold = true;
+        attrs.italic = true;
+        attrs.underline = true;
+        attrs.blink = true;
+        grid.set_attributes(attrs);
+
+        grid.put_char('A');
+        let cell = grid.get_cell(0, 0).unwrap();
+        assert!(cell.attributes.bold);
+        assert!(cell.attributes.italic);
+        assert!(cell.attributes.underline);
+        assert!(cell.attributes.blink);
+        assert_eq!(cell.char, 'A');
+    }
+
+    #[test]
+    fn test_attribute_persistence_across_cells() {
+        let mut grid = TerminalGrid::new();
+        let mut attrs = TextAttributes::default();
+        attrs.bold = true;
+        attrs.underline = true;
+        grid.set_attributes(attrs);
+
+        // Write multiple characters with same attributes
+        grid.put_char('A');
+        grid.put_char('B');
+        grid.put_char('C');
+
+        let cell_a = grid.get_cell(0, 0).unwrap();
+        let cell_b = grid.get_cell(0, 1).unwrap();
+        let cell_c = grid.get_cell(0, 2).unwrap();
+
+        assert!(cell_a.attributes.bold && cell_a.attributes.underline);
+        assert!(cell_b.attributes.bold && cell_b.attributes.underline);
+        assert!(cell_c.attributes.bold && cell_c.attributes.underline);
+    }
+
+    #[test]
+    fn test_change_attributes_between_cells() {
+        let mut grid = TerminalGrid::new();
+
+        // First character with bold
+        let mut attrs = TextAttributes::default();
+        attrs.bold = true;
+        grid.set_attributes(attrs);
+        grid.put_char('A');
+
+        // Second character with underline (not bold)
+        attrs.bold = false;
+        attrs.underline = true;
+        grid.set_attributes(attrs);
+        grid.put_char('B');
+
+        // Third character with italic
+        attrs.underline = false;
+        attrs.italic = true;
+        grid.set_attributes(attrs);
+        grid.put_char('C');
+
+        let cell_a = grid.get_cell(0, 0).unwrap();
+        let cell_b = grid.get_cell(0, 1).unwrap();
+        let cell_c = grid.get_cell(0, 2).unwrap();
+
+        assert!(cell_a.attributes.bold && !cell_a.attributes.underline && !cell_a.attributes.italic);
+        assert!(!cell_b.attributes.bold && cell_b.attributes.underline && !cell_b.attributes.italic);
+        assert!(!cell_c.attributes.bold && !cell_c.attributes.underline && cell_c.attributes.italic);
+    }
+
+    #[test]
+    fn test_attributes_reset_in_cell() {
+        let mut attrs = TextAttributes::default();
+        attrs.bold = true;
+        attrs.italic = true;
+        attrs.underline = true;
+        attrs.blink = true;
+
+        let mut cell = Cell::with_attributes('X', Color::Default, Color::Default, attrs);
+        assert!(!cell.is_empty()); // Has non-default attributes
+
+        cell.reset();
+        assert!(cell.is_empty()); // All defaults now
+    }
+
+    #[test]
+    fn test_grid_attributes_getter() {
+        let mut grid = TerminalGrid::new();
+        let mut attrs = TextAttributes::default();
+        attrs.bold = true;
+        attrs.italic = true;
+
+        grid.set_attributes(attrs);
+        let retrieved = grid.attributes();
+
+        assert!(retrieved.bold);
+        assert!(retrieved.italic);
+        assert!(!retrieved.underline);
+        assert!(!retrieved.blink);
+    }
+
+    #[test]
+    fn test_cell_attributes_equality() {
+        let attrs1 = TextAttributes {
+            bold: true,
+            italic: false,
+            underline: false,
+            blink: false,
+            ..Default::default()
+        };
+
+        let attrs2 = TextAttributes {
+            bold: true,
+            italic: false,
+            underline: false,
+            blink: false,
+            ..Default::default()
+        };
+
+        let attrs3 = TextAttributes {
+            bold: false,
+            italic: true,
+            ..Default::default()
+        };
+
+        assert_eq!(attrs1, attrs2);
+        assert_ne!(attrs1, attrs3);
+    }
+
+    #[test]
+    fn test_text_attributes_copy() {
+        let mut attrs1 = TextAttributes::default();
+        attrs1.bold = true;
+        attrs1.italic = true;
+
+        let mut attrs2 = attrs1;
+
+        assert!(attrs2.bold);
+        assert!(attrs2.italic);
+
+        // Modify attrs2 - shouldn't affect attrs1
+        attrs2.bold = false;
+        assert!(attrs1.bold);
+        assert!(!attrs2.bold);
     }
 }

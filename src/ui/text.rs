@@ -339,10 +339,16 @@ pub struct TextVertex {
     pub uv: [f32; 2],
     /// Color (RGBA)
     pub color: [f32; 4],
+    /// Text attributes packed as flags:
+    /// - x: bold (1.0 or 0.0)
+    /// - y: italic (1.0 or 0.0)
+    /// - z: underline (1.0 or 0.0)
+    /// - w: blink (1.0 or 0.0)
+    pub attributes: [f32; 4],
 }
 
 impl TextVertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 3] = [
+    const ATTRIBS: [wgpu::VertexAttribute; 4] = [
         wgpu::VertexAttribute {
             offset: 0,
             shader_location: 0,
@@ -356,6 +362,11 @@ impl TextVertex {
         wgpu::VertexAttribute {
             offset: std::mem::size_of::<[f32; 4]>() as u64,
             shader_location: 2,
+            format: wgpu::VertexFormat::Float32x4,
+        },
+        wgpu::VertexAttribute {
+            offset: std::mem::size_of::<[f32; 8]>() as u64,
+            shader_location: 3,
             format: wgpu::VertexFormat::Float32x4,
         },
     ];
@@ -561,7 +572,10 @@ impl TextRenderer {
         y: f32,
         fg_color: Color,
         bg_color: Color,
-        _bold: bool,
+        bold: bool,
+        italic: bool,
+        underline: bool,
+        blink: bool,
     ) -> Result<(), TextError> {
         // Cache glyph if not already cached
         if self.atlas.get_glyph(c).is_none() {
@@ -601,46 +615,156 @@ impl TextRenderer {
         let _cell_w = glyph.advance_width / screen_w * 2.0;
         let _cell_h = self.atlas.font_size() / screen_h * 2.0;
 
-        // Background quad (using UV 0,0 to cover the whole cell - we'll use a white pixel)
-        // For now, skip background and just render foreground
+        // Pack attributes into a vec4 for the shader
+        let attr_flags = [
+            if bold { 1.0 } else { 0.0 },
+            if italic { 1.0 } else { 0.0 },
+            if underline { 1.0 } else { 0.0 },
+            if blink { 1.0 } else { 0.0 },
+        ];
+
+        // Apply italic shear transformation to x coordinate based on y position
+        // This creates a slanted appearance for italic text
+        let italic_shear = if italic { 0.2 } else { 0.0 };
 
         // Foreground quad vertices (two triangles)
         let vertices = [
             // Triangle 1
             TextVertex {
-                position: [ndc_x, ndc_y],
+                position: [ndc_x + italic_shear * ndc_h, ndc_y],
                 uv: [u_min, v_min],
                 color: fg,
+                attributes: attr_flags,
             },
             TextVertex {
-                position: [ndc_x + ndc_w, ndc_y],
+                position: [ndc_x + ndc_w + italic_shear * ndc_h, ndc_y],
                 uv: [u_max, v_min],
                 color: fg,
+                attributes: attr_flags,
             },
             TextVertex {
                 position: [ndc_x, ndc_y - ndc_h],
                 uv: [u_min, v_max],
                 color: fg,
+                attributes: attr_flags,
             },
             // Triangle 2
             TextVertex {
-                position: [ndc_x + ndc_w, ndc_y],
+                position: [ndc_x + ndc_w + italic_shear * ndc_h, ndc_y],
                 uv: [u_max, v_min],
                 color: fg,
+                attributes: attr_flags,
             },
             TextVertex {
                 position: [ndc_x + ndc_w, ndc_y - ndc_h],
                 uv: [u_max, v_max],
                 color: fg,
+                attributes: attr_flags,
             },
             TextVertex {
                 position: [ndc_x, ndc_y - ndc_h],
                 uv: [u_min, v_max],
                 color: fg,
+                attributes: attr_flags,
             },
         ];
 
         self.vertices.extend_from_slice(&vertices);
+
+        // For bold, render the glyph again with a slight horizontal offset for a bolder appearance
+        if bold {
+            let bold_offset = 0.5 / screen_w * 2.0; // Small offset in NDC
+            let bold_vertices = [
+                // Triangle 1
+                TextVertex {
+                    position: [ndc_x + italic_shear * ndc_h + bold_offset, ndc_y],
+                    uv: [u_min, v_min],
+                    color: fg,
+                    attributes: attr_flags,
+                },
+                TextVertex {
+                    position: [ndc_x + ndc_w + italic_shear * ndc_h + bold_offset, ndc_y],
+                    uv: [u_max, v_min],
+                    color: fg,
+                    attributes: attr_flags,
+                },
+                TextVertex {
+                    position: [ndc_x + bold_offset, ndc_y - ndc_h],
+                    uv: [u_min, v_max],
+                    color: fg,
+                    attributes: attr_flags,
+                },
+                // Triangle 2
+                TextVertex {
+                    position: [ndc_x + ndc_w + italic_shear * ndc_h + bold_offset, ndc_y],
+                    uv: [u_max, v_min],
+                    color: fg,
+                    attributes: attr_flags,
+                },
+                TextVertex {
+                    position: [ndc_x + ndc_w + bold_offset, ndc_y - ndc_h],
+                    uv: [u_max, v_max],
+                    color: fg,
+                    attributes: attr_flags,
+                },
+                TextVertex {
+                    position: [ndc_x + bold_offset, ndc_y - ndc_h],
+                    uv: [u_min, v_max],
+                    color: fg,
+                    attributes: attr_flags,
+                },
+            ];
+            self.vertices.extend_from_slice(&bold_vertices);
+        }
+
+        // For underline, render a horizontal line at the baseline
+        if underline {
+            let underline_y = ndc_y - ndc_h + (2.0 / screen_h * 2.0); // 2 pixels below baseline
+            let underline_h = 1.0 / screen_h * 2.0; // 1 pixel height
+            let underline_color = fg;
+
+            let underline_vertices = [
+                // Single quad for underline
+                TextVertex {
+                    position: [ndc_x, underline_y],
+                    uv: [0.0, 0.0],
+                    color: underline_color,
+                    attributes: [0.0, 0.0, 0.0, 0.0], // No attributes for underline
+                },
+                TextVertex {
+                    position: [ndc_x + ndc_w, underline_y],
+                    uv: [0.0, 0.0],
+                    color: underline_color,
+                    attributes: [0.0, 0.0, 0.0, 0.0],
+                },
+                TextVertex {
+                    position: [ndc_x, underline_y - underline_h],
+                    uv: [0.0, 0.0],
+                    color: underline_color,
+                    attributes: [0.0, 0.0, 0.0, 0.0],
+                },
+                TextVertex {
+                    position: [ndc_x + ndc_w, underline_y],
+                    uv: [0.0, 0.0],
+                    color: underline_color,
+                    attributes: [0.0, 0.0, 0.0, 0.0],
+                },
+                TextVertex {
+                    position: [ndc_x + ndc_w, underline_y - underline_h],
+                    uv: [0.0, 0.0],
+                    color: underline_color,
+                    attributes: [0.0, 0.0, 0.0, 0.0],
+                },
+                TextVertex {
+                    position: [ndc_x, underline_y - underline_h],
+                    uv: [0.0, 0.0],
+                    color: underline_color,
+                    attributes: [0.0, 0.0, 0.0, 0.0],
+                },
+            ];
+            self.vertices.extend_from_slice(&underline_vertices);
+        }
+
         Ok(())
     }
 

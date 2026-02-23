@@ -230,6 +230,9 @@ impl<'window> Renderer<'window> {
                             cell.fg_color,
                             cell.bg_color,
                             cell.attributes.bold,
+                            cell.attributes.italic,
+                            cell.attributes.underline,
+                            cell.attributes.blink,
                         )?;
                     }
                 }

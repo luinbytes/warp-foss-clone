@@ -56,6 +56,42 @@ pub struct CursorPosition {
     pub col: usize,
 }
 
+/// Response type for Device Status Report (DSR) queries.
+///
+/// When the terminal receives a DSR request (CSI n), it should respond
+/// with the appropriate response sequence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeviceStatusResponse {
+    /// Response to CSI 5n (Device Status Report)
+    /// Format: ESC [ 0 n (terminal OK)
+    DeviceStatusOk,
+    /// Response to CSI 6n (Cursor Position Report)
+    /// Format: ESC [ row ; col R (1-indexed position)
+    CursorPosition {
+        /// Row number (1-indexed)
+        row: usize,
+        /// Column number (1-indexed)
+        col: usize,
+    },
+}
+
+impl DeviceStatusResponse {
+    /// Convert the response to its ANSI escape sequence string.
+    pub fn to_escape_sequence(&self) -> String {
+        match self {
+            DeviceStatusResponse::DeviceStatusOk => "\x1B[0n".to_string(),
+            DeviceStatusResponse::CursorPosition { row, col } => {
+                format!("\x1B[{};{}R", row, col)
+            }
+        }
+    }
+
+    /// Convert the response to bytes for sending to the PTY.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.to_escape_sequence().into_bytes()
+    }
+}
+
 /// Represents a parsed terminal output cell.
 #[derive(Debug, Clone)]
 pub struct TerminalCell {
@@ -107,6 +143,8 @@ pub struct ParserState {
     pub saved_scroll_region_bottom: usize,
     /// Origin mode - when true, cursor positioning is relative to scroll region
     pub origin_mode: bool,
+    /// Pending device status responses waiting to be sent back
+    pub pending_responses: Vec<DeviceStatusResponse>,
 }
 
 impl Default for ParserState {
@@ -124,6 +162,7 @@ impl Default for ParserState {
             saved_scroll_region_top: 0,
             saved_scroll_region_bottom: 23,
             origin_mode: false,
+            pending_responses: Vec::new(),
         }
     }
 }
@@ -148,6 +187,29 @@ impl ParserState {
             rows.saturating_sub(1)
         };
         self.cursor.row >= self.scroll_region_top && self.cursor.row <= effective_bottom
+    }
+
+    /// Check if there are any pending device status responses.
+    pub fn has_pending_responses(&self) -> bool {
+        !self.pending_responses.is_empty()
+    }
+
+    /// Take all pending device status responses, clearing the buffer.
+    pub fn take_responses(&mut self) -> Vec<DeviceStatusResponse> {
+        std::mem::take(&mut self.pending_responses)
+    }
+
+    /// Get pending responses as a single bytes vector for sending to the PTY.
+    pub fn responses_as_bytes(&self) -> Vec<u8> {
+        self.pending_responses
+            .iter()
+            .flat_map(|r: &DeviceStatusResponse| r.to_bytes())
+            .collect()
+    }
+
+    /// Clear all pending responses without processing them.
+    pub fn clear_responses(&mut self) {
+        self.pending_responses.clear();
     }
 }
 
@@ -637,6 +699,7 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                             3 => self.state.attributes.italic = true,
                             4 => self.state.attributes.underline = true,
                             5 => self.state.attributes.blink = true,
+                            6 => self.state.attributes.blink = true, // Rapid blink
                             7 => self.state.attributes.reverse = true,
                             8 => self.state.attributes.hidden = true,
                             9 => self.state.attributes.strikethrough = true,
@@ -713,6 +776,27 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                             _ => {}
                         }
                         i += 1;
+                    }
+                }
+            }
+            'n' => {
+                // DSR - Device Status Report
+                let mode = flat_params.first().copied().unwrap_or(0);
+                match mode {
+                    5 => {
+                        // Request Device Status - respond with "OK"
+                        self.state.pending_responses.push(DeviceStatusResponse::DeviceStatusOk);
+                    }
+                    6 => {
+                        // Request Cursor Position Report
+                        // Return 1-indexed position
+                        self.state.pending_responses.push(DeviceStatusResponse::CursorPosition {
+                            row: self.state.cursor.row + 1,
+                            col: self.state.cursor.col + 1,
+                        });
+                    }
+                    _ => {
+                        // Unknown mode - ignore
                     }
                 }
             }
@@ -970,6 +1054,7 @@ impl Perform for ParserState {
                             3 => self.attributes.italic = true,
                             4 => self.attributes.underline = true,
                             5 => self.attributes.blink = true,
+                            6 => self.attributes.blink = true, // Rapid blink
                             7 => self.attributes.reverse = true,
                             8 => self.attributes.hidden = true,
                             9 => self.attributes.strikethrough = true,
@@ -1056,6 +1141,27 @@ impl Perform for ParserState {
                             _ => {}
                         }
                         i += 1;
+                    }
+                }
+            }
+            'n' => {
+                // DSR - Device Status Report
+                let mode = flat_params.first().copied().unwrap_or(0);
+                match mode {
+                    5 => {
+                        // Request Device Status - respond with "OK"
+                        self.pending_responses.push(DeviceStatusResponse::DeviceStatusOk);
+                    }
+                    6 => {
+                        // Request Cursor Position Report
+                        // Return 1-indexed position
+                        self.pending_responses.push(DeviceStatusResponse::CursorPosition {
+                            row: self.cursor.row + 1,
+                            col: self.cursor.col + 1,
+                        });
+                    }
+                    _ => {
+                        // Unknown mode - ignore
                     }
                 }
             }
@@ -1416,8 +1522,291 @@ mod tests {
         // Restore
         parser.state.scroll_region_top = parser.state.saved_scroll_region_top;
         parser.state.scroll_region_bottom = parser.state.saved_scroll_region_bottom;
-        
+
         assert_eq!(parser.state.scroll_region_top, 4);
         assert_eq!(parser.state.scroll_region_bottom, 14);
+    }
+
+    // ===== Text Attribute Tests =====
+
+    #[test]
+    fn test_sgr_bold_enable() {
+        let mut parser = TerminalParser::new();
+
+        // CSI 1 m - Enable bold
+        parser.parse_bytes(b"\x1B[1m");
+        assert!(parser.attributes().bold);
+        assert!(!parser.attributes().italic);
+        assert!(!parser.attributes().underline);
+        assert!(!parser.attributes().blink);
+    }
+
+    #[test]
+    fn test_sgr_italic_enable() {
+        let mut parser = TerminalParser::new();
+
+        // CSI 3 m - Enable italic
+        parser.parse_bytes(b"\x1B[3m");
+        assert!(parser.attributes().italic);
+        assert!(!parser.attributes().bold);
+    }
+
+    #[test]
+    fn test_sgr_underline_enable() {
+        let mut parser = TerminalParser::new();
+
+        // CSI 4 m - Enable underline
+        parser.parse_bytes(b"\x1B[4m");
+        assert!(parser.attributes().underline);
+        assert!(!parser.attributes().bold);
+        assert!(!parser.attributes().italic);
+    }
+
+    #[test]
+    fn test_sgr_blink_enable() {
+        let mut parser = TerminalParser::new();
+
+        // CSI 5 m - Enable slow blink
+        parser.parse_bytes(b"\x1B[5m");
+        assert!(parser.attributes().blink);
+
+        // CSI 6 m - Enable rapid blink (also sets blink)
+        parser.parse_bytes(b"\x1B[0m"); // Reset first
+        parser.parse_bytes(b"\x1B[6m");
+        assert!(parser.attributes().blink);
+    }
+
+    #[test]
+    fn test_sgr_bold_disable() {
+        let mut parser = TerminalParser::new();
+
+        // Enable bold first
+        parser.parse_bytes(b"\x1B[1m");
+        assert!(parser.attributes().bold);
+
+        // CSI 22 m - Normal intensity (disable bold and dim)
+        parser.parse_bytes(b"\x1B[22m");
+        assert!(!parser.attributes().bold);
+        assert!(!parser.attributes().dim);
+    }
+
+    #[test]
+    fn test_sgr_italic_disable() {
+        let mut parser = TerminalParser::new();
+
+        // Enable italic first
+        parser.parse_bytes(b"\x1B[3m");
+        assert!(parser.attributes().italic);
+
+        // CSI 23 m - Not italic
+        parser.parse_bytes(b"\x1B[23m");
+        assert!(!parser.attributes().italic);
+    }
+
+    #[test]
+    fn test_sgr_underline_disable() {
+        let mut parser = TerminalParser::new();
+
+        // Enable underline first
+        parser.parse_bytes(b"\x1B[4m");
+        assert!(parser.attributes().underline);
+
+        // CSI 24 m - Not underline
+        parser.parse_bytes(b"\x1B[24m");
+        assert!(!parser.attributes().underline);
+    }
+
+    #[test]
+    fn test_sgr_blink_disable() {
+        let mut parser = TerminalParser::new();
+
+        // Enable blink first
+        parser.parse_bytes(b"\x1B[5m");
+        assert!(parser.attributes().blink);
+
+        // CSI 25 m - Not blinking
+        parser.parse_bytes(b"\x1B[25m");
+        assert!(!parser.attributes().blink);
+    }
+
+    #[test]
+    fn test_sgr_reset_all_attributes() {
+        let mut parser = TerminalParser::new();
+
+        // Enable all attributes
+        parser.parse_bytes(b"\x1B[1;3;4;5m");
+        assert!(parser.attributes().bold);
+        assert!(parser.attributes().italic);
+        assert!(parser.attributes().underline);
+        assert!(parser.attributes().blink);
+
+        // CSI 0 m - Reset all
+        parser.parse_bytes(b"\x1B[0m");
+        assert!(!parser.attributes().bold);
+        assert!(!parser.attributes().italic);
+        assert!(!parser.attributes().underline);
+        assert!(!parser.attributes().blink);
+    }
+
+    #[test]
+    fn test_sgr_empty_params_reset() {
+        let mut parser = TerminalParser::new();
+
+        // Enable all attributes
+        parser.parse_bytes(b"\x1B[1;3;4;5m");
+        assert!(parser.attributes().bold);
+
+        // CSI m (empty params) - Also resets
+        parser.parse_bytes(b"\x1B[m");
+        assert!(!parser.attributes().bold);
+        assert!(!parser.attributes().italic);
+        assert!(!parser.attributes().underline);
+        assert!(!parser.attributes().blink);
+    }
+
+    #[test]
+    fn test_sgr_combined_attributes() {
+        let mut parser = TerminalParser::new();
+
+        // Enable bold and underline together
+        parser.parse_bytes(b"\x1B[1;4m");
+        assert!(parser.attributes().bold);
+        assert!(parser.attributes().underline);
+        assert!(!parser.attributes().italic);
+        assert!(!parser.attributes().blink);
+    }
+
+    #[test]
+    fn test_sgr_all_four_attributes() {
+        let mut parser = TerminalParser::new();
+
+        // Enable all four main attributes
+        parser.parse_bytes(b"\x1B[1;3;4;5m");
+        assert!(parser.attributes().bold);
+        assert!(parser.attributes().italic);
+        assert!(parser.attributes().underline);
+        assert!(parser.attributes().blink);
+    }
+
+    #[test]
+    fn test_sgr_selective_disable() {
+        let mut parser = TerminalParser::new();
+
+        // Enable all four
+        parser.parse_bytes(b"\x1B[1;3;4;5m");
+
+        // Disable only italic (CSI 23 m)
+        parser.parse_bytes(b"\x1B[23m");
+        assert!(parser.attributes().bold);
+        assert!(!parser.attributes().italic);
+        assert!(parser.attributes().underline);
+        assert!(parser.attributes().blink);
+
+        // Disable only underline (CSI 24 m)
+        parser.parse_bytes(b"\x1B[4m"); // Re-enable
+        parser.parse_bytes(b"\x1B[24m");
+        assert!(parser.attributes().bold);
+        assert!(parser.attributes().italic == false);
+        assert!(!parser.attributes().underline);
+        assert!(parser.attributes().blink);
+    }
+
+    #[test]
+    fn test_sgr_dim_attribute() {
+        let mut parser = TerminalParser::new();
+
+        // CSI 2 m - Enable dim
+        parser.parse_bytes(b"\x1B[2m");
+        assert!(parser.attributes().dim);
+
+        // CSI 22 m - Disable dim (and bold)
+        parser.parse_bytes(b"\x1B[22m");
+        assert!(!parser.attributes().dim);
+    }
+
+    #[test]
+    fn test_sgr_reverse_attribute() {
+        let mut parser = TerminalParser::new();
+
+        // CSI 7 m - Enable reverse video
+        parser.parse_bytes(b"\x1B[7m");
+        assert!(parser.attributes().reverse);
+
+        // CSI 27 m - Disable reverse
+        parser.parse_bytes(b"\x1B[27m");
+        assert!(!parser.attributes().reverse);
+    }
+
+    #[test]
+    fn test_sgr_hidden_attribute() {
+        let mut parser = TerminalParser::new();
+
+        // CSI 8 m - Enable hidden
+        parser.parse_bytes(b"\x1B[8m");
+        assert!(parser.attributes().hidden);
+
+        // CSI 28 m - Disable hidden
+        parser.parse_bytes(b"\x1B[28m");
+        assert!(!parser.attributes().hidden);
+    }
+
+    #[test]
+    fn test_sgr_strikethrough_attribute() {
+        let mut parser = TerminalParser::new();
+
+        // CSI 9 m - Enable strikethrough
+        parser.parse_bytes(b"\x1B[9m");
+        assert!(parser.attributes().strikethrough);
+
+        // CSI 29 m - Disable strikethrough
+        parser.parse_bytes(b"\x1B[29m");
+        assert!(!parser.attributes().strikethrough);
+    }
+
+    #[test]
+    fn test_text_attributes_default() {
+        let attrs = TextAttributes::default();
+        assert!(!attrs.bold);
+        assert!(!attrs.dim);
+        assert!(!attrs.italic);
+        assert!(!attrs.underline);
+        assert!(!attrs.blink);
+        assert!(!attrs.reverse);
+        assert!(!attrs.hidden);
+        assert!(!attrs.strikethrough);
+    }
+
+    #[test]
+    fn test_text_attributes_reset() {
+        let mut attrs = TextAttributes::default();
+        attrs.bold = true;
+        attrs.italic = true;
+        attrs.underline = true;
+        attrs.blink = true;
+
+        attrs.reset();
+
+        assert!(!attrs.bold);
+        assert!(!attrs.italic);
+        assert!(!attrs.underline);
+        assert!(!attrs.blink);
+    }
+
+    #[test]
+    fn test_attributes_preserved_with_colors() {
+        let mut parser = TerminalParser::new();
+
+        // Set attributes and colors together
+        parser.parse_bytes(b"\x1B[1;3;31m"); // Bold, italic, red fg
+
+        assert!(parser.attributes().bold);
+        assert!(parser.attributes().italic);
+        assert_eq!(parser.foreground_color(), Color::Indexed(1)); // Red
+
+        // Change color but keep attributes
+        parser.parse_bytes(b"\x1B[34m"); // Blue fg
+        assert!(parser.attributes().bold);
+        assert!(parser.attributes().italic);
+        assert_eq!(parser.foreground_color(), Color::Indexed(4)); // Blue
     }
 }
