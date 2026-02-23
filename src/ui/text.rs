@@ -87,7 +87,10 @@ static ANSI_PALETTE: LazyLock<Box<[[f32; 4]; 256]>> = LazyLock::new(|| {
 
     // Convert Vec to Box to keep permanently on heap
     // This conversion is from heap to heap, no stack allocation
-    palette_vec.into_boxed_slice().try_into().expect("256 colors")
+    palette_vec
+        .into_boxed_slice()
+        .try_into()
+        .expect("256 colors")
 });
 
 #[derive(Error, Debug)]
