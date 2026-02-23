@@ -134,7 +134,7 @@ impl PtyReader {
     /// This reads available data from the PTY and stores it in an internal buffer.
     /// Use `take_batch()` to retrieve the accumulated data.
     pub fn read_batch(&mut self) -> PtyResult<usize> {
-        let mut temp_buf = [0u8; 4096];
+        let mut temp_buf = vec![0u8; 4096];
         match self.read(&mut temp_buf) {
             Ok(0) => Ok(0), // EOF
             Ok(n) => {
@@ -386,7 +386,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         // Read output
-        let mut buf = [0u8; 1024];
+        let mut buf = vec![0u8; 1024];
         let read_result = session.read(&mut buf);
         assert!(read_result.is_ok(), "Should be able to read from PTY");
     }
