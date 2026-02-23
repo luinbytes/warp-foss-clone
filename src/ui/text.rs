@@ -25,13 +25,13 @@ const ATLAS_ROWS: u32 = 16;
 const ATLAS_SIZE: u32 = MAX_GLYPH_SIZE * ATLAS_COLUMNS;
 
 /// Static ANSI color palette (256 colors, each with RGBA f32)
-/// Using Box to keep palette on heap permanently (Windows stack is only 1-2MB)
+/// Using Vec to build on heap, then Box to keep permanently (Windows stack is only 1-2MB)
 static ANSI_PALETTE: LazyLock<Box<[[f32; 4]; 256]>> = LazyLock::new(|| {
-    // Use heap allocation during construction to avoid stack overflow
-    let mut palette: Box<[[f32; 4]; 256]> = Box::new([[0.0f32; 4]; 256]);
+    // Build palette on heap using Vec to avoid any stack allocation
+    let mut palette_vec: Vec<[f32; 4]> = vec![[0.0f32; 4]; 256];
 
     // Basic 16 colors
-    let basic: Vec<[f32; 4]> = vec![
+    let basic_colors = vec![
         [0.0, 0.0, 0.0, 1.0], // 0: Black
         [0.8, 0.0, 0.0, 1.0], // 1: Red
         [0.0, 0.8, 0.0, 1.0], // 2: Green
@@ -50,8 +50,8 @@ static ANSI_PALETTE: LazyLock<Box<[[f32; 4]; 256]>> = LazyLock::new(|| {
         [1.0, 1.0, 1.0, 1.0], // 15: Bright White
     ];
 
-    for (i, &color) in basic.iter().enumerate() {
-        palette[i] = color;
+    for (i, &color) in basic_colors.iter().enumerate() {
+        palette_vec[i] = color;
     }
 
     // 216 color cube (16-231)
@@ -59,7 +59,7 @@ static ANSI_PALETTE: LazyLock<Box<[[f32; 4]; 256]>> = LazyLock::new(|| {
         let r = (i / 36) % 6;
         let g = (i / 6) % 6;
         let b = i % 6;
-        palette[16 + i] = [
+        palette_vec[16 + i] = [
             if r > 0 {
                 (r * 40 + 55) as f32 / 255.0
             } else {
@@ -82,10 +82,12 @@ static ANSI_PALETTE: LazyLock<Box<[[f32; 4]; 256]>> = LazyLock::new(|| {
     // Grayscale (232-255)
     for i in 0..24 {
         let gray = (i * 10 + 8) as f32 / 255.0;
-        palette[232 + i] = [gray, gray, gray, 1.0];
+        palette_vec[232 + i] = [gray, gray, gray, 1.0];
     }
 
-    palette
+    // Convert Vec to Box to keep permanently on heap
+    // This conversion is from heap to heap, no stack allocation
+    palette_vec.into_boxed_slice().try_into().expect("256 colors")
 });
 
 #[derive(Error, Debug)]
