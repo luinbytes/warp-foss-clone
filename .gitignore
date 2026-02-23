@@ -1,2 +1,7 @@
 target/
 *.log
+
+# Build outputs and archives
+archive/
+*.rlib
+release-tar/
