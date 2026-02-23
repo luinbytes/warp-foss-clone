@@ -25,12 +25,13 @@ const ATLAS_ROWS: u32 = 16;
 const ATLAS_SIZE: u32 = MAX_GLYPH_SIZE * ATLAS_COLUMNS;
 
 /// Static ANSI color palette (256 colors, each with RGBA f32)
-/// Using LazyLock to avoid stack allocation during runtime
-static ANSI_PALETTE: LazyLock<[[f32; 4]; 256]> = LazyLock::new(|| {
-    let mut palette = [[0.0f32; 4]; 256];
+/// Using Box to keep palette on heap permanently (Windows stack is only 1-2MB)
+static ANSI_PALETTE: LazyLock<Box<[[f32; 4]; 256]>> = LazyLock::new(|| {
+    // Use heap allocation during construction to avoid stack overflow
+    let mut palette: Box<[[f32; 4]; 256]> = Box::new([[0.0f32; 4]; 256]);
 
     // Basic 16 colors
-    let basic: [[f32; 4]; 16] = [
+    let basic: Vec<[f32; 4]> = vec![
         [0.0, 0.0, 0.0, 1.0], // 0: Black
         [0.8, 0.0, 0.0, 1.0], // 1: Red
         [0.0, 0.8, 0.0, 1.0], // 2: Green
