@@ -2,6 +2,7 @@
 //!
 //! This module provides GPU-accelerated text rendering for the terminal emulator.
 //! It uses fontdue for font rasterization and wgpu for GPU rendering.
+#![allow(dead_code)]
 
 use fontdue::{Font, FontSettings};
 use std::collections::HashMap;

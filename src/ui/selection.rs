@@ -5,6 +5,7 @@
 //! - Click and drag selection
 //! - Copy to clipboard
 //! - Paste from clipboard
+#![allow(dead_code)]
 
 use crate::terminal::grid::{Cell, Cursor};
 use anyhow::Result;
@@ -141,8 +142,7 @@ impl Default for SelectionRegion {
 }
 
 /// Selection state
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SelectionState {
     /// Current selection region (if any)
     pub region: SelectionRegion,
@@ -151,7 +151,6 @@ pub struct SelectionState {
     /// Mouse tracking mode
     pub mouse_mode: MouseMode,
 }
-
 
 impl SelectionState {
     /// Create a new selection state

@@ -1,4 +1,5 @@
 //! AI Provider abstraction for BYOK support
+#![allow(dead_code)]
 
 use async_trait::async_trait;
 use futures::Stream;

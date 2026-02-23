@@ -2,6 +2,7 @@
 //!
 //! This module provides cross-platform PTY spawning and I/O operations
 //! for the terminal emulator.
+#![allow(dead_code)]
 
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};

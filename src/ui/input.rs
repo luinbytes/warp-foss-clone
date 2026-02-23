@@ -1,6 +1,7 @@
 //! Keyboard input handling for the terminal emulator.
 //!
 //! Converts winit keyboard events into terminal escape sequences.
+#![allow(dead_code)]
 
 use winit::event::{ElementState, KeyEvent, Modifiers, WindowEvent};
 use winit::keyboard::{Key, KeyCode, NamedKey, PhysicalKey};

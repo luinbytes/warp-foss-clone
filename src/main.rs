@@ -269,7 +269,7 @@ impl TerminalApp {
             // Attempt to read more data (limit to 5 attempts to avoid blocking)
             let read_result = {
                 if let Some(ref pty) = self.pty {
-                    if let Ok(mut session) = pty.lock() {
+                    if let Ok(session) = pty.lock() {
                         let mut buf = vec![0u8; 4096];
                         match session.read(&mut buf) {
                             Ok(0) => {

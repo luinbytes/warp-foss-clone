@@ -2,6 +2,7 @@
 //!
 //! This module provides a 2D grid representation of terminal content,
 //! including character data, colors, text attributes, and scrollback history.
+#![allow(dead_code)]
 
 use std::fmt;
 
