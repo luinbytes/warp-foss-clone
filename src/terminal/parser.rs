@@ -1971,4 +1971,144 @@ mod tests {
         parser.parse_bytes(b"\x1B[38;2;127;127;127m");
         assert_eq!(parser.foreground_color(), Color::Rgb(127, 127, 127));
     }
+
+    // ===== Cursor Position Report Tests (CSI 6n) =====
+
+    #[test]
+    fn test_dsr_csi_6n_cursor_position_report() {
+        let mut parser = TerminalParser::new();
+
+        // Move cursor to position (row 5, col 10) - 0-indexed internally
+        parser.parse_bytes(b"\x1B[6;11H"); // 1-indexed: row 6, col 11
+        assert_eq!(parser.state.cursor.row, 5);
+        assert_eq!(parser.state.cursor.col, 10);
+
+        // Request cursor position report (CSI 6n)
+        parser.parse_bytes(b"\x1B[6n");
+
+        // Check that a response was queued
+        assert!(parser.state.has_pending_responses());
+
+        // Take the response
+        let responses = parser.state.take_responses();
+        assert_eq!(responses.len(), 1);
+
+        // Verify response format: ESC[row;colR (1-indexed)
+        match &responses[0] {
+            DeviceStatusResponse::CursorPosition { row, col } => {
+                assert_eq!(*row, 6);  // 1-indexed
+                assert_eq!(*col, 11); // 1-indexed
+
+                // Check the escape sequence format
+                let escape_seq = responses[0].to_escape_sequence();
+                assert_eq!(escape_seq, "\x1B[6;11R");
+
+                // Check bytes format
+                let bytes = responses[0].to_bytes();
+                assert_eq!(bytes, b"\x1B[6;11R");
+            }
+            _ => panic!("Expected CursorPosition response"),
+        }
+    }
+
+    #[test]
+    fn test_dsr_csi_6n_at_origin() {
+        let mut parser = TerminalParser::new();
+
+        // Cursor at origin (0, 0)
+        assert_eq!(parser.state.cursor.row, 0);
+        assert_eq!(parser.state.cursor.col, 0);
+
+        // Request cursor position report
+        parser.parse_bytes(b"\x1B[6n");
+
+        let responses = parser.state.take_responses();
+        assert_eq!(responses.len(), 1);
+
+        match &responses[0] {
+            DeviceStatusResponse::CursorPosition { row, col } => {
+                // Should be 1-indexed: (1, 1)
+                assert_eq!(*row, 1);
+                assert_eq!(*col, 1);
+                assert_eq!(responses[0].to_escape_sequence(), "\x1B[1;1R");
+            }
+            _ => panic!("Expected CursorPosition response"),
+        }
+    }
+
+    #[test]
+    fn test_dsr_csi_5n_device_status_ok() {
+        let mut parser = TerminalParser::new();
+
+        // Request device status (CSI 5n)
+        parser.parse_bytes(b"\x1B[5n");
+
+        let responses = parser.state.take_responses();
+        assert_eq!(responses.len(), 1);
+
+        match &responses[0] {
+            DeviceStatusResponse::DeviceStatusOk => {
+                assert_eq!(responses[0].to_escape_sequence(), "\x1B[0n");
+                assert_eq!(responses[0].to_bytes(), b"\x1B[0n");
+            }
+            _ => panic!("Expected DeviceStatusOk response"),
+        }
+    }
+
+    #[test]
+    fn test_dsr_multiple_requests() {
+        let mut parser = TerminalParser::new();
+
+        // Move cursor
+        parser.parse_bytes(b"\x1B[10;20H");
+
+        // Request multiple device status reports
+        parser.parse_bytes(b"\x1B[5n"); // Device status
+        parser.parse_bytes(b"\x1B[6n"); // Cursor position
+        parser.parse_bytes(b"\x1B[5n"); // Another device status
+
+        let responses = parser.state.take_responses();
+        assert_eq!(responses.len(), 3);
+
+        // First: Device status OK
+        assert!(matches!(&responses[0], DeviceStatusResponse::DeviceStatusOk));
+
+        // Second: Cursor position
+        match &responses[1] {
+            DeviceStatusResponse::CursorPosition { row, col } => {
+                assert_eq!(*row, 10);
+                assert_eq!(*col, 20);
+                assert_eq!(responses[1].to_escape_sequence(), "\x1B[10;20R");
+            }
+            _ => panic!("Expected CursorPosition response"),
+        }
+
+        // Third: Device status OK again
+        assert!(matches!(&responses[2], DeviceStatusResponse::DeviceStatusOk));
+
+        // Test responses_as_bytes combines all
+        parser.state.pending_responses.push(responses[0].clone());
+        parser.state.pending_responses.push(responses[1].clone());
+        parser.state.pending_responses.push(responses[2].clone());
+
+        let combined = parser.state.responses_as_bytes();
+        assert_eq!(combined, b"\x1B[0n\x1B[10;20R\x1B[0n");
+    }
+
+    #[test]
+    fn test_dsr_clear_pending_responses() {
+        let mut parser = TerminalParser::new();
+
+        // Generate some responses
+        parser.parse_bytes(b"\x1B[5n");
+        parser.parse_bytes(b"\x1B[6n");
+
+        assert!(parser.state.has_pending_responses());
+
+        // Clear responses
+        parser.state.clear_responses();
+
+        assert!(!parser.state.has_pending_responses());
+        assert!(parser.state.take_responses().is_empty());
+    }
 }
