@@ -39,7 +39,7 @@ impl ModifierState {
         self.alt = state.alt_key();
         self.super_key = state.super_key();
     }
-    
+
     /// Updates modifier state from a ModifiersState directly
     pub fn update_from_state(&mut self, state: winit::keyboard::ModifiersState) {
         self.shift = state.shift_key();
@@ -91,9 +91,7 @@ impl InputHandler {
     /// Handle a window event and optionally return terminal input
     pub fn handle_event(&mut self, event: &WindowEvent) -> TerminalInput {
         match event {
-            WindowEvent::KeyboardInput { event, .. } => {
-                self.handle_key_event(event)
-            }
+            WindowEvent::KeyboardInput { event, .. } => self.handle_key_event(event),
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers.update(*modifiers);
                 TerminalInput::None
@@ -260,11 +258,11 @@ impl InputHandler {
         } else {
             // Handle special cases
             match c {
-                '[' => Some('\x1b'), // Ctrl+[ -> ESC
+                '[' => Some('\x1b'),  // Ctrl+[ -> ESC
                 '\\' => Some('\x1c'), // Ctrl+\ -> FS
-                ']' => Some('\x1d'), // Ctrl+] -> GS
-                '^' => Some('\x1e'), // Ctrl+^ -> RS
-                '_' => Some('\x1f'), // Ctrl+_ -> US
+                ']' => Some('\x1d'),  // Ctrl+] -> GS
+                '^' => Some('\x1e'),  // Ctrl+^ -> RS
+                '_' => Some('\x1f'),  // Ctrl+_ -> US
                 _ => None,
             }
         }
@@ -290,7 +288,7 @@ impl InputHandler {
     /// Generate function key escape sequence with modifiers
     fn f_key(&self, num: u8) -> TerminalInput {
         let modifier = self.modifiers.as_escape_modifier();
-        
+
         // F1-F4 use SS3 sequences, F5-F12 use CSI sequences
         let escape = match num {
             1 => {
@@ -448,7 +446,7 @@ mod tests {
     #[test]
     fn test_ctrl_char_conversion() {
         let handler = InputHandler::new();
-        
+
         assert_eq!(handler.ctrl_char('a'), Some('\x01'));
         assert_eq!(handler.ctrl_char('z'), Some('\x1a'));
         assert_eq!(handler.ctrl_char('A'), Some('\x01'));

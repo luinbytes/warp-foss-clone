@@ -5,4 +5,4 @@ pub mod ollama;
 pub mod openai;
 pub mod provider;
 
-pub use provider::{AIProvider, AIError, CompletionOptions};
+pub use provider::{AIError, AIProvider, CompletionOptions};

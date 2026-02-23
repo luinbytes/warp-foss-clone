@@ -20,7 +20,7 @@ use terminal::grid::TerminalGrid;
 use terminal::parser::TerminalParser;
 use terminal::pty::{PtyConfig, PtySession};
 use ui::input::InputHandler;
-use ui::selection::{Clipboard, SelectionState, extract_selected_text};
+use ui::selection::{extract_selected_text, Clipboard, SelectionState};
 use winit::{
     application::ApplicationHandler,
     dpi::{PhysicalPosition, PhysicalSize},
@@ -91,21 +91,21 @@ struct RendererHolder {
 impl RendererHolder {
     async fn new(window: Arc<Window>) -> Result<Self, ui::renderer::RendererError> {
         use ui::renderer::RendererError;
-        
+
         // Create instance
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             ..Default::default()
         });
-        
+
         // Create surface - we need 'static lifetime, so we leak the Arc
         // This is safe because the window lives for the duration of the application
         let window_static: &'static Window = Box::leak(Box::new(window));
-        
+
         let surface = instance
             .create_surface(window_static)
             .map_err(|e| RendererError::SurfaceCreation(e.to_string()))?;
-        
+
         // Request adapter
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -114,8 +114,10 @@ impl RendererHolder {
                 force_fallback_adapter: false,
             })
             .await
-            .ok_or_else(|| RendererError::AdapterRequest("No suitable adapter found".to_string()))?;
-        
+            .ok_or_else(|| {
+                RendererError::AdapterRequest("No suitable adapter found".to_string())
+            })?;
+
         // Get surface capabilities
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps
@@ -124,9 +126,9 @@ impl RendererHolder {
             .copied()
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
-        
+
         let size = window_static.inner_size();
-        
+
         // Request device and queue
         let (device, queue) = adapter
             .request_device(
@@ -140,7 +142,7 @@ impl RendererHolder {
             )
             .await
             .map_err(|e| RendererError::DeviceRequest(e.to_string()))?;
-        
+
         // Configure surface
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -152,9 +154,9 @@ impl RendererHolder {
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
-        
+
         surface.configure(&device, &config);
-        
+
         Ok(Self {
             device,
             queue,
@@ -162,7 +164,7 @@ impl RendererHolder {
             config,
         })
     }
-    
+
     fn resize(&mut self, width: u32, height: u32) {
         if width > 0 && height > 0 {
             self.config.width = width;
@@ -170,23 +172,25 @@ impl RendererHolder {
             self.surface.configure(&self.device, &self.config);
         }
     }
-    
+
     fn render(&mut self) -> Result<(), ui::renderer::RendererError> {
         use ui::renderer::RendererError;
-        
+
         let output = self
             .surface
             .get_current_texture()
             .map_err(|e| RendererError::TextureAcquisition(e.to_string()))?;
-        
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        
+
+        let view = output
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("Render Encoder"),
             });
-        
+
         {
             let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Render Pass"),
@@ -210,10 +214,10 @@ impl RendererHolder {
             // Note: We'll draw actual geometry here later
             // For now, just clearing to dark background
         }
-        
+
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
-        
+
         Ok(())
     }
 }
@@ -240,7 +244,7 @@ impl TerminalApp {
             modifiers: ModifiersState::default(),
         }
     }
-    
+
     /// Initialize the PTY session
     fn init_pty(&mut self, cols: u16, rows: u16) -> Result<()> {
         let config = PtyConfig {
@@ -248,12 +252,12 @@ impl TerminalApp {
             rows,
             ..Default::default()
         };
-        
+
         let pty = PtySession::spawn(config)?;
         self.pty = Some(Arc::new(Mutex::new(pty)));
         Ok(())
     }
-    
+
     /// Read and process PTY output (non-blocking with batching)
     fn read_pty_output(&mut self) {
         // Batch read from PTY - accumulate multiple reads before processing
@@ -281,7 +285,9 @@ impl TerminalApp {
                             Err(e) => {
                                 // Would block is expected when no data available
                                 let err_str = e.to_string();
-                                if !err_str.contains("Would block") && !err_str.contains("Resource temporarily unavailable") {
+                                if !err_str.contains("Would block")
+                                    && !err_str.contains("Resource temporarily unavailable")
+                                {
                                     tracing::debug!("PTY read error: {}", e);
                                 }
                                 // No more data available
@@ -315,7 +321,7 @@ impl TerminalApp {
             self.process_terminal_output(&data);
         }
     }
-    
+
     /// Process terminal output bytes through the parser to the grid.
     ///
     /// This is the main pipeline: PTY bytes → Parser (escape sequences) → Grid (screen buffer)
@@ -338,7 +344,7 @@ impl TerminalApp {
         // Flush batched updates and calculate dirty region
         self.grid.flush_batch();
     }
-    
+
     /// Send input to the PTY
     fn send_pty_input(&mut self, data: &[u8]) {
         if !data.is_empty() {
@@ -351,25 +357,25 @@ impl TerminalApp {
             }
         }
     }
-    
+
     /// Handle window resize
     fn handle_resize(&mut self, width: u32, height: u32) {
         // Resize the renderer
         if let Some(ref mut renderer) = self.renderer {
             renderer.resize(width, height);
         }
-        
+
         // Calculate new terminal dimensions (assuming 10x20 pixel cells)
         let cell_width = 10u32;
         let cell_height = 20u32;
         let new_cols = (width / cell_width) as usize;
         let new_rows = (height / cell_height) as usize;
-        
+
         // Resize the terminal grid
         if new_cols > 0 && new_rows > 0 {
             self.grid.resize(new_cols, new_rows);
             self.parser.resize(new_cols, new_rows);
-            
+
             // Resize the PTY
             if let Some(ref pty) = self.pty {
                 if let Ok(mut session) = pty.lock() {
@@ -380,7 +386,7 @@ impl TerminalApp {
             }
         }
     }
-    
+
     /// Render a frame
     fn render(&mut self) {
         if let Some(ref mut renderer) = self.renderer {
@@ -484,7 +490,7 @@ impl ApplicationHandler for TerminalApp {
         let window = match event_loop.create_window(
             Window::default_attributes()
                 .with_title("Warp FOSS")
-                .with_inner_size(PhysicalSize::new(1200, 800))
+                .with_inner_size(PhysicalSize::new(1200, 800)),
         ) {
             Ok(w) => Arc::new(w),
             Err(e) => {
@@ -493,12 +499,12 @@ impl ApplicationHandler for TerminalApp {
                 return;
             }
         };
-        
+
         // Get initial size
         let size = window.inner_size();
         let cols = (size.width / 10) as u16;
         let rows = (size.height / 20) as u16;
-        
+
         // Initialize renderer
         let renderer = match pollster::block_on(RendererHolder::new(Arc::clone(&window))) {
             Ok(r) => r,
@@ -508,14 +514,14 @@ impl ApplicationHandler for TerminalApp {
                 return;
             }
         };
-        
+
         // Initialize PTY
         if let Err(e) = self.init_pty(cols.max(40), rows.max(10)) {
             tracing::error!("Failed to initialize PTY: {}", e);
             event_loop.exit();
             return;
         }
-        
+
         self.window = Some(window);
         self.renderer = Some(renderer);
         self.running = true;
@@ -527,18 +533,23 @@ impl ApplicationHandler for TerminalApp {
 
         tracing::info!("Terminal application started");
     }
-    
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
+
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
         match event {
             WindowEvent::CloseRequested => {
                 self.running = false;
                 event_loop.exit();
             }
-            
+
             WindowEvent::Resized(physical_size) => {
                 self.handle_resize(physical_size.width, physical_size.height);
             }
-            
+
             WindowEvent::KeyboardInput { event, .. } => {
                 // Check for paste shortcuts
                 let is_paste = match &event.logical_key {
@@ -560,9 +571,11 @@ impl ApplicationHandler for TerminalApp {
                     self.send_pty_input(&data);
                 }
             }
-            
+
             WindowEvent::ModifiersChanged(modifiers) => {
-                self.input_handler.modifiers_mut().update_from_state(modifiers.state());
+                self.input_handler
+                    .modifiers_mut()
+                    .update_from_state(modifiers.state());
                 self.modifiers = modifiers.state();
             }
 
@@ -577,24 +590,24 @@ impl ApplicationHandler for TerminalApp {
             WindowEvent::RedrawRequested => {
                 // Read and process any pending PTY output
                 self.read_pty_output();
-                
+
                 // Render
                 self.render();
-                
+
                 // Request next frame
                 if let Some(ref window) = self.window {
                     window.request_redraw();
                 }
             }
-            
+
             _ => {}
         }
     }
-    
+
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // Process PTY output periodically
         self.read_pty_output();
-        
+
         // Limit frame rate
         let elapsed = self.last_frame.elapsed();
         if elapsed < self.frame_duration {
@@ -602,18 +615,18 @@ impl ApplicationHandler for TerminalApp {
             std::thread::sleep(wait.min(Duration::from_millis(1)));
         }
         self.last_frame = Instant::now();
-        
+
         // Request redraw if running
         if self.running {
             if let Some(ref window) = self.window {
                 window.request_redraw();
             }
         }
-        
+
         // Set control flow
         event_loop.set_control_flow(ControlFlow::Wait);
     }
-    
+
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
         tracing::info!("Terminal application exiting");
     }
@@ -622,18 +635,18 @@ impl ApplicationHandler for TerminalApp {
 fn main() -> Result<()> {
     // Initialize logging
     tracing_subscriber::fmt::init();
-    
+
     tracing::info!("Warp FOSS v0.1.0");
     tracing::info!("Starting terminal application...");
-    
+
     // Create event loop
     let event_loop = EventLoop::new()?;
-    
+
     // Create app
     let mut app = TerminalApp::new();
-    
+
     // Run event loop
     event_loop.run_app(&mut app)?;
-    
+
     Ok(())
 }

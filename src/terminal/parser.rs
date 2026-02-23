@@ -222,42 +222,42 @@ impl ParserState {
 pub trait TerminalOutput {
     /// Put a character at the current cursor position with current attributes.
     fn put_char(&mut self, c: char);
-    
+
     /// Handle backspace.
     fn backspace(&mut self);
-    
+
     /// Handle tab.
     fn tab(&mut self);
-    
+
     /// Handle line feed within scroll region.
     fn linefeed_in_region(&mut self, top: usize, bottom: usize);
-    
+
     /// Handle carriage return.
     fn carriage_return(&mut self);
-    
+
     /// Move cursor to position.
     fn move_cursor(&mut self, row: usize, col: usize);
-    
+
     /// Clear screen.
     fn clear_screen(&mut self);
-    
+
     /// Get current cursor position.
     fn cursor_position(&self) -> (usize, usize);
-    
+
     /// Scroll the content within a region up by n lines.
     /// Lines above the region are unaffected. Lines at the bottom of the region are cleared.
     fn scroll_up_in_region(&mut self, n: usize, top: usize, bottom: usize);
-    
+
     /// Scroll the content within a region down by n lines.
     /// Lines below the region are unaffected. Lines at the top of the region are cleared.
     fn scroll_down_in_region(&mut self, n: usize, top: usize, bottom: usize);
-    
+
     /// Erase in display with mode.
     fn erase_in_display(&mut self, _mode: u16) {
         // Default implementation clears entire screen
         self.clear_screen();
     }
-    
+
     /// Erase in line with mode.
     fn erase_in_line(&mut self, _mode: u16) {
         // Default implementation - override in implementor
@@ -295,7 +295,7 @@ impl TerminalParser {
     pub fn with_size(cols: usize, rows: usize) -> Self {
         let mut state = ParserState::default();
         state.set_terminal_size(rows);
-        
+
         Self {
             parser: vte::Parser::new(),
             state,
@@ -327,7 +327,7 @@ impl TerminalParser {
             cols: self.cols,
             rows: self.rows,
         };
-        
+
         for byte in bytes {
             self.parser.advance(&mut wrapper, *byte);
         }
@@ -358,7 +358,8 @@ impl TerminalParser {
         self.cols = cols;
         self.rows = rows;
         self.state.set_terminal_size(rows);
-        self.output_buffer.resize(cols * rows, TerminalCell::default());
+        self.output_buffer
+            .resize(cols * rows, TerminalCell::default());
     }
 
     /// Get the output buffer.
@@ -395,7 +396,11 @@ impl TerminalParser {
 
     /// Parse a color from SGR parameters.
     fn parse_color(params: &Params, start_idx: usize) -> Option<Color> {
-        let iter: Vec<u16> = params.iter().skip(start_idx).flat_map(|p| p.iter().copied()).collect();
+        let iter: Vec<u16> = params
+            .iter()
+            .skip(start_idx)
+            .flat_map(|p| p.iter().copied())
+            .collect();
 
         if iter.is_empty() {
             return None;
@@ -436,8 +441,11 @@ impl<O: TerminalOutput> ParserOutputWrapper<'_, O> {
     /// Handle line feed with scroll region support
     fn handle_linefeed(&mut self) {
         let top = self.state.scroll_region_top;
-        let bottom = self.state.scroll_region_bottom.min(self.rows.saturating_sub(1));
-        
+        let bottom = self
+            .state
+            .scroll_region_bottom
+            .min(self.rows.saturating_sub(1));
+
         // Check if cursor is at the bottom of scroll region
         if self.state.cursor.row == bottom {
             // Scroll the region up
@@ -446,16 +454,19 @@ impl<O: TerminalOutput> ParserOutputWrapper<'_, O> {
             // Just move cursor down
             self.state.cursor.row += 1;
         }
-        
+
         // Notify output of linefeed within region
         self.output.linefeed_in_region(top, bottom);
     }
-    
+
     /// Handle reverse index (ESC M) with scroll region support
     fn handle_reverse_index(&mut self) {
         let top = self.state.scroll_region_top;
-        let bottom = self.state.scroll_region_bottom.min(self.rows.saturating_sub(1));
-        
+        let bottom = self
+            .state
+            .scroll_region_bottom
+            .min(self.rows.saturating_sub(1));
+
         if self.state.cursor.row == top {
             // Cursor at top of scroll region, scroll down
             self.output.scroll_down_in_region(1, top, bottom);
@@ -517,7 +528,13 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
         // OSC sequences - window titles, etc.
     }
 
-    fn csi_dispatch(&mut self, params: &Params, _intermediates: &[u8], _ignore: bool, action: char) {
+    fn csi_dispatch(
+        &mut self,
+        params: &Params,
+        _intermediates: &[u8],
+        _ignore: bool,
+        action: char,
+    ) {
         let params_vec: Vec<Vec<u16>> = params.iter().map(|p| p.to_vec()).collect();
         let flat_params: Vec<u16> = params_vec.iter().flat_map(|p| p.iter().copied()).collect();
 
@@ -525,18 +542,23 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
             'A' => {
                 // CUU - Cursor Up
                 let n = flat_params.first().copied().unwrap_or(1) as usize;
-                let min_row = if self.state.origin_mode { self.state.scroll_region_top } else { 0 };
+                let min_row = if self.state.origin_mode {
+                    self.state.scroll_region_top
+                } else {
+                    0
+                };
                 self.state.cursor.row = self.state.cursor.row.saturating_sub(n).max(min_row);
                 let (row, col) = self.output.cursor_position();
-                self.output.move_cursor(row.saturating_sub(n).max(min_row), col);
+                self.output
+                    .move_cursor(row.saturating_sub(n).max(min_row), col);
             }
             'B' => {
                 // CUD - Cursor Down
                 let n = flat_params.first().copied().unwrap_or(1) as usize;
-                let max_row = if self.state.origin_mode { 
-                    self.state.scroll_region_bottom 
-                } else { 
-                    self.rows.saturating_sub(1) 
+                let max_row = if self.state.origin_mode {
+                    self.state.scroll_region_bottom
+                } else {
+                    self.rows.saturating_sub(1)
                 };
                 self.state.cursor.row = (self.state.cursor.row + n).min(max_row);
                 let (row, col) = self.output.cursor_position();
@@ -559,10 +581,10 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
             'E' => {
                 // CNL - Cursor Next Line
                 let n = flat_params.first().copied().unwrap_or(1) as usize;
-                let max_row = if self.state.origin_mode { 
-                    self.state.scroll_region_bottom 
-                } else { 
-                    self.rows.saturating_sub(1) 
+                let max_row = if self.state.origin_mode {
+                    self.state.scroll_region_bottom
+                } else {
+                    self.rows.saturating_sub(1)
                 };
                 self.state.cursor.row = (self.state.cursor.row + n).min(max_row);
                 self.state.cursor.col = 0;
@@ -572,11 +594,16 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
             'F' => {
                 // CPL - Cursor Previous Line
                 let n = flat_params.first().copied().unwrap_or(1) as usize;
-                let min_row = if self.state.origin_mode { self.state.scroll_region_top } else { 0 };
+                let min_row = if self.state.origin_mode {
+                    self.state.scroll_region_top
+                } else {
+                    0
+                };
                 self.state.cursor.row = self.state.cursor.row.saturating_sub(n).max(min_row);
                 self.state.cursor.col = 0;
                 let (row, _) = self.output.cursor_position();
-                self.output.move_cursor(row.saturating_sub(n).max(min_row), 0);
+                self.output
+                    .move_cursor(row.saturating_sub(n).max(min_row), 0);
             }
             'G' => {
                 // CHA - Cursor Horizontal Absolute
@@ -589,7 +616,7 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                 // CUP - Cursor Position (row; col)
                 let row_param = flat_params.first().copied().unwrap_or(1) as usize;
                 let col_param = flat_params.get(1).copied().unwrap_or(1) as usize;
-                
+
                 // Apply origin mode offset
                 let (final_row, final_col) = if self.state.origin_mode {
                     let row = (self.state.scroll_region_top + row_param.saturating_sub(1))
@@ -601,7 +628,7 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                     let col = col_param.saturating_sub(1).min(self.cols - 1);
                     (row, col)
                 };
-                
+
                 self.state.cursor.row = final_row;
                 self.state.cursor.col = final_col;
                 self.output.move_cursor(final_row, final_col);
@@ -626,7 +653,10 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                 // Insert blank lines at cursor, shifting lines down within scroll region
                 let n = flat_params.first().copied().unwrap_or(1) as usize;
                 let top = self.state.cursor.row;
-                let bottom = self.state.scroll_region_bottom.min(self.rows.saturating_sub(1));
+                let bottom = self
+                    .state
+                    .scroll_region_bottom
+                    .min(self.rows.saturating_sub(1));
                 if top >= self.state.scroll_region_top && top <= bottom {
                     // Scroll down from cursor row to bottom of region
                     self.output.scroll_down_in_region(n, top, bottom);
@@ -637,7 +667,10 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                 // Delete lines at cursor, shifting lines up within scroll region
                 let n = flat_params.first().copied().unwrap_or(1) as usize;
                 let top = self.state.cursor.row;
-                let bottom = self.state.scroll_region_bottom.min(self.rows.saturating_sub(1));
+                let bottom = self
+                    .state
+                    .scroll_region_bottom
+                    .min(self.rows.saturating_sub(1));
                 if top >= self.state.scroll_region_top && top <= bottom {
                     // Scroll up from cursor row to bottom of region
                     self.output.scroll_up_in_region(n, top, bottom);
@@ -647,16 +680,16 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                 // DECSTBM - Set Top and Bottom Margins (Scroll Region)
                 let top = flat_params.first().copied().unwrap_or(1) as usize;
                 let bottom = flat_params.get(1).copied().unwrap_or(self.rows as u16) as usize;
-                
+
                 // Convert from 1-indexed to 0-indexed
                 let top_idx = top.saturating_sub(1);
                 let bottom_idx = bottom.saturating_sub(1).min(self.rows.saturating_sub(1));
-                
+
                 // Validate: top must be less than bottom
                 if top_idx < bottom_idx {
                     self.state.scroll_region_top = top_idx;
                     self.state.scroll_region_bottom = bottom_idx;
-                    
+
                     // Move cursor to home position (top-left of screen or scroll region with origin mode)
                     if self.state.origin_mode {
                         self.state.cursor.row = self.state.scroll_region_top;
@@ -665,14 +698,18 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                         self.state.cursor.row = 0;
                         self.state.cursor.col = 0;
                     }
-                    self.output.move_cursor(self.state.cursor.row, self.state.cursor.col);
+                    self.output
+                        .move_cursor(self.state.cursor.row, self.state.cursor.col);
                 }
             }
             'S' => {
                 // SU - Scroll Up (scroll content up within scroll region)
                 let n = flat_params.first().copied().unwrap_or(1) as usize;
                 let top = self.state.scroll_region_top;
-                let bottom = self.state.scroll_region_bottom.min(self.rows.saturating_sub(1));
+                let bottom = self
+                    .state
+                    .scroll_region_bottom
+                    .min(self.rows.saturating_sub(1));
                 self.output.scroll_up_in_region(n, top, bottom);
             }
             'T' => {
@@ -680,7 +717,10 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                 // Note: CSI T can also be initiator for track mouse, but we treat as scroll
                 let n = flat_params.first().copied().unwrap_or(1) as usize;
                 let top = self.state.scroll_region_top;
-                let bottom = self.state.scroll_region_bottom.min(self.rows.saturating_sub(1));
+                let bottom = self
+                    .state
+                    .scroll_region_bottom
+                    .min(self.rows.saturating_sub(1));
                 self.output.scroll_down_in_region(n, top, bottom);
             }
             'm' => {
@@ -725,7 +765,8 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                                     match flat_params[i + 1] {
                                         5 => {
                                             if i + 2 < flat_params.len() {
-                                                self.state.fg_color = Color::Indexed(flat_params[i + 2] as u8);
+                                                self.state.fg_color =
+                                                    Color::Indexed(flat_params[i + 2] as u8);
                                                 i += 2;
                                             }
                                         }
@@ -752,7 +793,8 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                                     match flat_params[i + 1] {
                                         5 => {
                                             if i + 2 < flat_params.len() {
-                                                self.state.bg_color = Color::Indexed(flat_params[i + 2] as u8);
+                                                self.state.bg_color =
+                                                    Color::Indexed(flat_params[i + 2] as u8);
                                                 i += 2;
                                             }
                                         }
@@ -772,10 +814,12 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                             }
                             49 => self.state.bg_color = Color::Default,
                             90..=97 => {
-                                self.state.fg_color = Color::Indexed((flat_params[i] - 90 + 8) as u8);
+                                self.state.fg_color =
+                                    Color::Indexed((flat_params[i] - 90 + 8) as u8);
                             }
                             100..=107 => {
-                                self.state.bg_color = Color::Indexed((flat_params[i] - 100 + 8) as u8);
+                                self.state.bg_color =
+                                    Color::Indexed((flat_params[i] - 100 + 8) as u8);
                             }
                             _ => {}
                         }
@@ -789,15 +833,19 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                 match mode {
                     5 => {
                         // Request Device Status - respond with "OK"
-                        self.state.pending_responses.push(DeviceStatusResponse::DeviceStatusOk);
+                        self.state
+                            .pending_responses
+                            .push(DeviceStatusResponse::DeviceStatusOk);
                     }
                     6 => {
                         // Request Cursor Position Report
                         // Return 1-indexed position
-                        self.state.pending_responses.push(DeviceStatusResponse::CursorPosition {
-                            row: self.state.cursor.row + 1,
-                            col: self.state.cursor.col + 1,
-                        });
+                        self.state
+                            .pending_responses
+                            .push(DeviceStatusResponse::CursorPosition {
+                                row: self.state.cursor.row + 1,
+                                col: self.state.cursor.col + 1,
+                            });
                     }
                     _ => {
                         // Unknown mode - ignore
@@ -817,7 +865,8 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                 self.state.attributes = self.state.saved_attributes;
                 self.state.scroll_region_top = self.state.saved_scroll_region_top;
                 self.state.scroll_region_bottom = self.state.saved_scroll_region_bottom;
-                self.output.move_cursor(self.state.cursor.row, self.state.cursor.col);
+                self.output
+                    .move_cursor(self.state.cursor.row, self.state.cursor.col);
             }
             _ => {}
         }
@@ -864,7 +913,8 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
                 self.state.attributes = self.state.saved_attributes;
                 self.state.scroll_region_top = self.state.saved_scroll_region_top;
                 self.state.scroll_region_bottom = self.state.saved_scroll_region_bottom;
-                self.output.move_cursor(self.state.cursor.row, self.state.cursor.col);
+                self.output
+                    .move_cursor(self.state.cursor.row, self.state.cursor.col);
             }
             _ => {}
         }
@@ -939,7 +989,13 @@ impl Perform for ParserState {
     }
 
     /// Handle a CSI escape sequence.
-    fn csi_dispatch(&mut self, params: &Params, _intermediates: &[u8], _ignore: bool, action: char) {
+    fn csi_dispatch(
+        &mut self,
+        params: &Params,
+        _intermediates: &[u8],
+        _ignore: bool,
+        action: char,
+    ) {
         let params_vec: Vec<Vec<u16>> = params.iter().map(|p| p.to_vec()).collect();
         let flat_params: Vec<u16> = params_vec.iter().flat_map(|p| p.iter().copied()).collect();
 
@@ -1027,10 +1083,10 @@ impl Perform for ParserState {
                 // DECSTBM - Set Top and Bottom Margins
                 let top = flat_params.first().copied().unwrap_or(1) as usize;
                 let bottom = flat_params.get(1).copied().unwrap_or(24) as usize;
-                
+
                 let top_idx = top.saturating_sub(1);
                 let bottom_idx = bottom.saturating_sub(1);
-                
+
                 if top_idx < bottom_idx {
                     self.scroll_region_top = top_idx;
                     self.scroll_region_bottom = bottom_idx;
@@ -1083,7 +1139,8 @@ impl Perform for ParserState {
                                         5 => {
                                             // 256-color
                                             if i + 2 < flat_params.len() {
-                                                self.fg_color = Color::Indexed(flat_params[i + 2] as u8);
+                                                self.fg_color =
+                                                    Color::Indexed(flat_params[i + 2] as u8);
                                                 i += 2;
                                             }
                                         }
@@ -1114,7 +1171,8 @@ impl Perform for ParserState {
                                         5 => {
                                             // 256-color
                                             if i + 2 < flat_params.len() {
-                                                self.bg_color = Color::Indexed(flat_params[i + 2] as u8);
+                                                self.bg_color =
+                                                    Color::Indexed(flat_params[i + 2] as u8);
                                                 i += 2;
                                             }
                                         }
@@ -1154,15 +1212,17 @@ impl Perform for ParserState {
                 match mode {
                     5 => {
                         // Request Device Status - respond with "OK"
-                        self.pending_responses.push(DeviceStatusResponse::DeviceStatusOk);
+                        self.pending_responses
+                            .push(DeviceStatusResponse::DeviceStatusOk);
                     }
                     6 => {
                         // Request Cursor Position Report
                         // Return 1-indexed position
-                        self.pending_responses.push(DeviceStatusResponse::CursorPosition {
-                            row: self.cursor.row + 1,
-                            col: self.cursor.col + 1,
-                        });
+                        self.pending_responses
+                            .push(DeviceStatusResponse::CursorPosition {
+                                row: self.cursor.row + 1,
+                                col: self.cursor.col + 1,
+                            });
                     }
                     _ => {
                         // Unknown mode - ignore
@@ -1399,7 +1459,7 @@ mod tests {
     #[test]
     fn test_scroll_region_default() {
         let parser = TerminalParser::with_size(80, 24);
-        
+
         // Default scroll region should be full screen
         assert_eq!(parser.state.scroll_region_top, 0);
         assert_eq!(parser.state.scroll_region_bottom, 23);
@@ -1408,15 +1468,15 @@ mod tests {
     #[test]
     fn test_decstbm_set_scroll_region() {
         let mut parser = TerminalParser::with_size(80, 24);
-        
+
         // Set scroll region to rows 5-15 (1-indexed)
         // CSI 5 ; 15 r
         parser.parse_bytes(b"\x1B[5;15r");
-        
+
         // Convert to 0-indexed: 4-14
         assert_eq!(parser.state.scroll_region_top, 4);
         assert_eq!(parser.state.scroll_region_bottom, 14);
-        
+
         // Cursor should move to home
         assert_eq!(parser.cursor_position().row, 0);
         assert_eq!(parser.cursor_position().col, 0);
@@ -1425,12 +1485,12 @@ mod tests {
     #[test]
     fn test_decstbm_full_screen() {
         let mut parser = TerminalParser::with_size(80, 24);
-        
+
         // First set a custom region
         parser.parse_bytes(b"\x1B[5;15r");
         assert_eq!(parser.state.scroll_region_top, 4);
         assert_eq!(parser.state.scroll_region_bottom, 14);
-        
+
         // Reset to full screen with CSI r (no params = full screen)
         parser.parse_bytes(b"\x1B[r");
         assert_eq!(parser.state.scroll_region_top, 0);
@@ -1440,10 +1500,10 @@ mod tests {
     #[test]
     fn test_decstbm_invalid_region() {
         let mut parser = TerminalParser::with_size(80, 24);
-        
+
         // Try to set invalid region (top >= bottom)
         parser.parse_bytes(b"\x1B[15;5r");
-        
+
         // Should not change from default
         assert_eq!(parser.state.scroll_region_top, 0);
         assert_eq!(parser.state.scroll_region_bottom, 23);
@@ -1452,10 +1512,10 @@ mod tests {
     #[test]
     fn test_decstbm_single_param() {
         let mut parser = TerminalParser::with_size(80, 24);
-        
+
         // CSI 5 r - set top margin only, bottom defaults to screen bottom
         parser.parse_bytes(b"\x1B[5r");
-        
+
         assert_eq!(parser.state.scroll_region_top, 4);
         assert_eq!(parser.state.scroll_region_bottom, 23);
     }
@@ -1464,11 +1524,11 @@ mod tests {
     fn test_scroll_region_state() {
         let mut state = ParserState::default();
         state.set_terminal_size(24);
-        
+
         assert_eq!(state.scroll_region_top, 0);
         assert_eq!(state.scroll_region_bottom, 23);
         assert!(!state.has_scroll_region());
-        
+
         state.scroll_region_top = 5;
         state.scroll_region_bottom = 15;
         assert!(state.has_scroll_region());
@@ -1480,13 +1540,13 @@ mod tests {
         state.set_terminal_size(24);
         state.scroll_region_top = 5;
         state.scroll_region_bottom = 15;
-        
+
         state.cursor.row = 3;
         assert!(!state.cursor_in_scroll_region(24));
-        
+
         state.cursor.row = 10;
         assert!(state.cursor_in_scroll_region(24));
-        
+
         state.cursor.row = 15;
         assert!(state.cursor_in_scroll_region(24));
     }
@@ -1494,15 +1554,15 @@ mod tests {
     #[test]
     fn test_reset_clears_scroll_region() {
         let mut parser = TerminalParser::with_size(80, 24);
-        
+
         // Set a scroll region
         parser.state.scroll_region_top = 4;
         parser.state.scroll_region_bottom = 14;
-        
+
         // ESC c (RIS) should reset scroll region via state
         parser.state.scroll_region_top = 0;
         parser.state.scroll_region_bottom = 23;
-        
+
         assert_eq!(parser.state.scroll_region_top, 0);
         assert_eq!(parser.state.scroll_region_bottom, 23);
     }
@@ -1510,19 +1570,19 @@ mod tests {
     #[test]
     fn test_save_restore_includes_scroll_region() {
         let mut parser = TerminalParser::with_size(80, 24);
-        
+
         // Set scroll region
         parser.state.scroll_region_top = 4;
         parser.state.scroll_region_bottom = 14;
-        
+
         // Save state
         parser.state.saved_scroll_region_top = parser.state.scroll_region_top;
         parser.state.saved_scroll_region_bottom = parser.state.scroll_region_bottom;
-        
+
         // Change scroll region
         parser.state.scroll_region_top = 1;
         parser.state.scroll_region_bottom = 9;
-        
+
         // Restore
         parser.state.scroll_region_top = parser.state.saved_scroll_region_top;
         parser.state.scroll_region_bottom = parser.state.saved_scroll_region_bottom;
@@ -2000,7 +2060,7 @@ mod tests {
         // Verify response format: ESC[row;colR (1-indexed)
         match &responses[0] {
             DeviceStatusResponse::CursorPosition { row, col } => {
-                assert_eq!(*row, 6);  // 1-indexed
+                assert_eq!(*row, 6); // 1-indexed
                 assert_eq!(*col, 11); // 1-indexed
 
                 // Check the escape sequence format
@@ -2075,7 +2135,10 @@ mod tests {
         assert_eq!(responses.len(), 3);
 
         // First: Device status OK
-        assert!(matches!(&responses[0], DeviceStatusResponse::DeviceStatusOk));
+        assert!(matches!(
+            &responses[0],
+            DeviceStatusResponse::DeviceStatusOk
+        ));
 
         // Second: Cursor position
         match &responses[1] {
@@ -2088,7 +2151,10 @@ mod tests {
         }
 
         // Third: Device status OK again
-        assert!(matches!(&responses[2], DeviceStatusResponse::DeviceStatusOk));
+        assert!(matches!(
+            &responses[2],
+            DeviceStatusResponse::DeviceStatusOk
+        ));
 
         // Test responses_as_bytes combines all
         parser.state.pending_responses.push(responses[0].clone());

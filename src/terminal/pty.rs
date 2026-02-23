@@ -262,13 +262,17 @@ impl PtySession {
             .map_err(|e| PtyError::SpawnFailed(e.to_string()))?;
 
         // Create reader and writer handles
-        let writer = PtyWriter::new(pair.master.take_writer().map_err(|e| {
-            PtyError::CreationFailed(e.to_string())
-        })?);
+        let writer = PtyWriter::new(
+            pair.master
+                .take_writer()
+                .map_err(|e| PtyError::CreationFailed(e.to_string()))?,
+        );
 
-        let reader = PtyReader::new(pair.master.try_clone_reader().map_err(|e| {
-            PtyError::CreationFailed(e.to_string())
-        })?);
+        let reader = PtyReader::new(
+            pair.master
+                .try_clone_reader()
+                .map_err(|e| PtyError::CreationFailed(e.to_string()))?,
+        );
 
         Ok(Self {
             pair,

@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use super::parser::{Color, TextAttributes, TerminalOutput};
+use super::parser::{Color, TerminalOutput, TextAttributes};
 
 /// A single cell in the terminal grid.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -348,13 +348,15 @@ impl TerminalGrid {
         if row_delta < 0 {
             self.cursor.row = self.cursor.row.saturating_sub(row_delta.unsigned_abs());
         } else {
-            self.cursor.row = (self.cursor.row + row_delta as usize).min(self.rows.saturating_sub(1));
+            self.cursor.row =
+                (self.cursor.row + row_delta as usize).min(self.rows.saturating_sub(1));
         }
 
         if col_delta < 0 {
             self.cursor.col = self.cursor.col.saturating_sub(col_delta.unsigned_abs());
         } else {
-            self.cursor.col = (self.cursor.col + col_delta as usize).min(self.cols.saturating_sub(1));
+            self.cursor.col =
+                (self.cursor.col + col_delta as usize).min(self.cols.saturating_sub(1));
         }
     }
 
@@ -512,7 +514,12 @@ impl TerminalGrid {
                 self.grid[self.cursor.row][col_idx].reset();
             }
             // Mark region as dirty
-            self.mark_region_dirty(self.cursor.row, self.cursor.row, self.cursor.col, self.cols - 1);
+            self.mark_region_dirty(
+                self.cursor.row,
+                self.cursor.row,
+                self.cursor.col,
+                self.cols - 1,
+            );
         }
     }
 
@@ -624,7 +631,7 @@ impl TerminalGrid {
         // Reconstruct grid
         let mut new_grid = above_region;
         new_grid.append(&mut in_region);
-        
+
         // Add rows below region
         if bottom + 1 < self.rows {
             new_grid.extend_from_slice(&self.grid[bottom + 1..]);
@@ -675,7 +682,7 @@ impl TerminalGrid {
         // Reconstruct grid
         let mut new_grid = above_region;
         new_grid.append(&mut in_region);
-        
+
         // Add rows below region
         if bottom + 1 < self.rows {
             new_grid.extend_from_slice(&self.grid[bottom + 1..]);
@@ -753,7 +760,8 @@ impl TerminalGrid {
 
         // Insert blank lines at cursor position
         for _ in 0..insert_count {
-            self.grid.insert(self.cursor.row, vec![Cell::default(); self.cols]);
+            self.grid
+                .insert(self.cursor.row, vec![Cell::default(); self.cols]);
         }
 
         // Ensure we still have the right number of rows
@@ -772,7 +780,8 @@ impl TerminalGrid {
         let delete_count = n.min(self.rows - self.cursor.row);
 
         // Remove lines at cursor position
-        self.grid.drain(self.cursor.row..(self.cursor.row + delete_count));
+        self.grid
+            .drain(self.cursor.row..(self.cursor.row + delete_count));
 
         // Add blank lines at the bottom
         for _ in 0..delete_count {
@@ -838,12 +847,7 @@ impl TerminalGrid {
 
     /// Save the current cursor position and attributes.
     pub fn save_cursor(&mut self) -> (Cursor, TextAttributes, Color, Color) {
-        (
-            self.cursor,
-            self.attributes,
-            self.fg_color,
-            self.bg_color,
-        )
+        (self.cursor, self.attributes, self.fg_color, self.bg_color)
     }
 
     /// Restore a previously saved cursor position and attributes.
@@ -971,7 +975,8 @@ impl Default for TerminalGrid {
 
 impl fmt::Display for TerminalGrid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let content: String = self.grid
+        let content: String = self
+            .grid
             .iter()
             .map(|row| row.iter().map(|cell| cell.char).collect::<String>())
             .collect::<Vec<_>>()
@@ -1182,7 +1187,13 @@ mod tests {
 
         // Check scrollback
         assert_eq!(grid.scrollback_len(), 1);
-        assert_eq!(grid.scrollback()[0].iter().map(|c| c.char).collect::<String>(), "AAAAA");
+        assert_eq!(
+            grid.scrollback()[0]
+                .iter()
+                .map(|c| c.char)
+                .collect::<String>(),
+            "AAAAA"
+        );
     }
 
     #[test]
@@ -1293,7 +1304,13 @@ mod tests {
         grid.scroll_up(1);
 
         assert_eq!(grid.scrollback_len(), 1);
-        assert_eq!(grid.scrollback()[0].iter().map(|c| c.char).collect::<String>(), "AAAAA");
+        assert_eq!(
+            grid.scrollback()[0]
+                .iter()
+                .map(|c| c.char)
+                .collect::<String>(),
+            "AAAAA"
+        );
     }
 
     #[test]
@@ -1375,7 +1392,7 @@ mod tests {
         assert_eq!(grid.row_to_string(2), "     "); // Inserted blank
         assert_eq!(grid.row_to_string(3), "     "); // Inserted blank
         assert_eq!(grid.row_to_string(4), "CCCCC"); // Shifted up
-        // D and E are lost
+                                                    // D and E are lost
 
         // Delete 1 line at row 0
         grid.move_cursor(0, 0);
@@ -1507,15 +1524,15 @@ mod tests {
         assert_eq!(grid.row_to_string(0), "00000");
         assert_eq!(grid.row_to_string(1), "11111");
         assert_eq!(grid.row_to_string(2), "22222");
-        
+
         // Row 3 should now have content from row 4
         assert_eq!(grid.row_to_string(3), "44444");
         assert_eq!(grid.row_to_string(4), "55555");
         assert_eq!(grid.row_to_string(5), "66666");
-        
+
         // Row 6 (bottom of region) should be cleared
         assert_eq!(grid.row_to_string(6), "     ");
-        
+
         // Rows below region unchanged
         assert_eq!(grid.row_to_string(7), "77777");
         assert_eq!(grid.row_to_string(8), "88888");
@@ -1542,15 +1559,15 @@ mod tests {
         assert_eq!(grid.row_to_string(0), "00000");
         assert_eq!(grid.row_to_string(1), "11111");
         assert_eq!(grid.row_to_string(2), "22222");
-        
+
         // Row 3 (top of region) should be cleared
         assert_eq!(grid.row_to_string(3), "     ");
-        
+
         // Rows 4-6 should have content from rows 3-5
         assert_eq!(grid.row_to_string(4), "33333");
         assert_eq!(grid.row_to_string(5), "44444");
         assert_eq!(grid.row_to_string(6), "55555");
-        
+
         // Rows below region unchanged
         assert_eq!(grid.row_to_string(7), "77777");
         assert_eq!(grid.row_to_string(8), "88888");
@@ -1596,16 +1613,16 @@ mod tests {
         // Cursor at row 4, not at bottom of region
         grid.move_cursor(4, 2);
         grid.linefeed_in_region(2, 5);
-        
+
         // Cursor should move down
         assert_eq!(grid.cursor().row, 5);
 
         // Cursor at bottom of region
         grid.linefeed_in_region(2, 5);
-        
+
         // Should scroll the region, cursor stays at row 5
         assert_eq!(grid.cursor().row, 5);
-        
+
         // Row 2 should now have row 3's content
         assert_eq!(grid.row_to_string(2), "33333");
     }
@@ -1626,9 +1643,9 @@ mod tests {
         // Mode 0: erase from cursor to end
         grid.move_cursor(1, 2);
         grid.erase_in_display(0);
-        assert_eq!(grid.row_to_string(0), "AAAAA");  // Unchanged
-        assert_eq!(grid.row_to_string(1), "BB   ");  // Cleared from col 2
-        assert_eq!(grid.row_to_string(2), "     ");  // Entire row cleared
+        assert_eq!(grid.row_to_string(0), "AAAAA"); // Unchanged
+        assert_eq!(grid.row_to_string(1), "BB   "); // Cleared from col 2
+        assert_eq!(grid.row_to_string(2), "     "); // Entire row cleared
 
         // Reset and test mode 1: erase from start to cursor
         for row in 0..3 {
@@ -1640,9 +1657,9 @@ mod tests {
         }
         grid.move_cursor(1, 2);
         grid.erase_in_display(1);
-        assert_eq!(grid.row_to_string(0), "     ");  // Entire row cleared
-        assert_eq!(grid.row_to_string(1), "   BB");  // Cleared up to col 2 (inclusive)
-        assert_eq!(grid.row_to_string(2), "CCCCC");  // Unchanged
+        assert_eq!(grid.row_to_string(0), "     "); // Entire row cleared
+        assert_eq!(grid.row_to_string(1), "   BB"); // Cleared up to col 2 (inclusive)
+        assert_eq!(grid.row_to_string(2), "CCCCC"); // Unchanged
     }
 
     #[test]
@@ -1816,9 +1833,15 @@ mod tests {
         let cell_b = grid.get_cell(0, 1).unwrap();
         let cell_c = grid.get_cell(0, 2).unwrap();
 
-        assert!(cell_a.attributes.bold && !cell_a.attributes.underline && !cell_a.attributes.italic);
-        assert!(!cell_b.attributes.bold && cell_b.attributes.underline && !cell_b.attributes.italic);
-        assert!(!cell_c.attributes.bold && !cell_c.attributes.underline && cell_c.attributes.italic);
+        assert!(
+            cell_a.attributes.bold && !cell_a.attributes.underline && !cell_a.attributes.italic
+        );
+        assert!(
+            !cell_b.attributes.bold && cell_b.attributes.underline && !cell_b.attributes.italic
+        );
+        assert!(
+            !cell_c.attributes.bold && !cell_c.attributes.underline && cell_c.attributes.italic
+        );
     }
 
     #[test]

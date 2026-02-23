@@ -24,8 +24,16 @@ pub struct CompletionOptions {
 #[async_trait]
 pub trait AIProvider: Send + Sync {
     /// Get a completion from the AI
-    async fn complete(&self, prompt: &str, opts: Option<CompletionOptions>) -> Result<String, AIError>;
-    
+    async fn complete(
+        &self,
+        prompt: &str,
+        opts: Option<CompletionOptions>,
+    ) -> Result<String, AIError>;
+
     /// Stream a completion (for better UX)
-    async fn stream(&self, prompt: &str, opts: Option<CompletionOptions>) -> Result<impl Stream<Item = Result<String, AIError>>, AIError>;
+    async fn stream(
+        &self,
+        prompt: &str,
+        opts: Option<CompletionOptions>,
+    ) -> Result<impl Stream<Item = Result<String, AIError>>, AIError>;
 }

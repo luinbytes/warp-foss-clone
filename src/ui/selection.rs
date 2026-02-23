@@ -7,8 +7,8 @@
 //! - Paste from clipboard
 
 use crate::terminal::grid::{Cell, Cursor};
-use std::sync::{Arc, Mutex};
 use anyhow::Result;
+use std::sync::{Arc, Mutex};
 
 /// Mouse tracking mode flags
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -67,13 +67,18 @@ impl SelectionRegion {
     /// Create a new selection region
     pub fn new(start: Cursor, end: Cursor) -> Self {
         // Normalize so start is always before end
-        let (start, end) = if start.row < end.row || (start.row == end.row && start.col <= end.col) {
+        let (start, end) = if start.row < end.row || (start.row == end.row && start.col <= end.col)
+        {
             (start, end)
         } else {
             (end, start)
         };
         // Explicitly created regions are always active
-        Self { start, end, active: true }
+        Self {
+            start,
+            end,
+            active: true,
+        }
     }
 
     /// Create an empty selection region
@@ -115,8 +120,16 @@ impl SelectionRegion {
         if row < self.start.row || row > self.end.row {
             return None;
         }
-        let start_col = if row == self.start.row { self.start.col } else { 0 };
-        let end_col = if row == self.end.row { self.end.col } else { usize::MAX };
+        let start_col = if row == self.start.row {
+            self.start.col
+        } else {
+            0
+        };
+        let end_col = if row == self.end.row {
+            self.end.col
+        } else {
+            usize::MAX
+        };
         Some((start_col, end_col))
     }
 }
@@ -270,7 +283,10 @@ pub fn extract_selected_text(grid: &[Vec<Cell>], selection: &SelectionRegion) ->
 }
 
 /// Extract selected text including leading whitespace
-pub fn extract_selected_text_preserve_ws(grid: &[Vec<Cell>], selection: &SelectionRegion) -> String {
+pub fn extract_selected_text_preserve_ws(
+    grid: &[Vec<Cell>],
+    selection: &SelectionRegion,
+) -> String {
     if !selection.active || grid.is_empty() {
         return String::new();
     }
@@ -446,10 +462,7 @@ mod tests {
 
     #[test]
     fn test_selection_region_contains() {
-        let region = SelectionRegion::new(
-            Cursor::new(1, 3),
-            Cursor::new(3, 7),
-        );
+        let region = SelectionRegion::new(Cursor::new(1, 3), Cursor::new(3, 7));
 
         // Inside selection
         assert!(region.contains(Cursor::new(2, 5)));
@@ -465,10 +478,7 @@ mod tests {
 
     #[test]
     fn test_selection_region_cols_for_row() {
-        let region = SelectionRegion::new(
-            Cursor::new(1, 3),
-            Cursor::new(3, 7),
-        );
+        let region = SelectionRegion::new(Cursor::new(1, 3), Cursor::new(3, 7));
 
         // Middle row - full range
         assert_eq!(region.cols_for_row(2), Some((0, usize::MAX)));
@@ -487,10 +497,7 @@ mod tests {
     #[test]
     fn test_extract_selected_text_single_char() {
         let grid = create_test_grid();
-        let selection = SelectionRegion::new(
-            Cursor::new(0, 0),
-            Cursor::new(0, 0),
-        );
+        let selection = SelectionRegion::new(Cursor::new(0, 0), Cursor::new(0, 0));
 
         let text = extract_selected_text(&grid, &selection);
         assert_eq!(text, "H");
@@ -499,10 +506,7 @@ mod tests {
     #[test]
     fn test_extract_selected_text_single_line() {
         let grid = create_test_grid();
-        let selection = SelectionRegion::new(
-            Cursor::new(0, 0),
-            Cursor::new(0, 4),
-        );
+        let selection = SelectionRegion::new(Cursor::new(0, 0), Cursor::new(0, 4));
 
         let text = extract_selected_text(&grid, &selection);
         assert_eq!(text, "Hello");
@@ -511,10 +515,7 @@ mod tests {
     #[test]
     fn test_extract_selected_text_multiple_lines() {
         let grid = create_test_grid();
-        let selection = SelectionRegion::new(
-            Cursor::new(0, 0),
-            Cursor::new(1, 4),
-        );
+        let selection = SelectionRegion::new(Cursor::new(0, 0), Cursor::new(1, 4));
 
         let text = extract_selected_text(&grid, &selection);
         assert_eq!(text, "Hello\nTest");
@@ -523,10 +524,7 @@ mod tests {
     #[test]
     fn test_extract_selected_text_trailing_whitespace() {
         let grid = create_test_grid();
-        let selection = SelectionRegion::new(
-            Cursor::new(0, 5),
-            Cursor::new(0, 11),
-        );
+        let selection = SelectionRegion::new(Cursor::new(0, 5), Cursor::new(0, 11));
 
         let text = extract_selected_text(&grid, &selection);
         // Should trim trailing whitespace
@@ -536,10 +534,7 @@ mod tests {
     #[test]
     fn test_extract_selected_text_preserve_ws() {
         let grid = create_test_grid();
-        let selection = SelectionRegion::new(
-            Cursor::new(0, 5),
-            Cursor::new(0, 11),
-        );
+        let selection = SelectionRegion::new(Cursor::new(0, 5), Cursor::new(0, 11));
 
         let text = extract_selected_text_preserve_ws(&grid, &selection);
         // Should preserve whitespace

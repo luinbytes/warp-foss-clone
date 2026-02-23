@@ -30,22 +30,22 @@ static ANSI_PALETTE: LazyLock<[[f32; 4]; 256]> = LazyLock::new(|| {
 
     // Basic 16 colors
     let basic: [[f32; 4]; 16] = [
-        [0.0, 0.0, 0.0, 1.0],       // 0: Black
-        [0.8, 0.0, 0.0, 1.0],       // 1: Red
-        [0.0, 0.8, 0.0, 1.0],       // 2: Green
-        [0.8, 0.8, 0.0, 1.0],       // 3: Yellow
-        [0.0, 0.0, 0.8, 1.0],       // 4: Blue
-        [0.8, 0.0, 0.8, 1.0],       // 5: Magenta
-        [0.0, 0.8, 0.8, 1.0],       // 6: Cyan
-        [0.8, 0.8, 0.8, 1.0],       // 7: White
-        [0.5, 0.5, 0.5, 1.0],       // 8: Bright Black
-        [1.0, 0.0, 0.0, 1.0],       // 9: Bright Red
-        [0.0, 1.0, 0.0, 1.0],       // 10: Bright Green
-        [1.0, 1.0, 0.0, 1.0],       // 11: Bright Yellow
-        [0.0, 0.0, 1.0, 1.0],       // 12: Bright Blue
-        [1.0, 0.0, 1.0, 1.0],       // 13: Bright Magenta
-        [0.0, 1.0, 1.0, 1.0],       // 14: Bright Cyan
-        [1.0, 1.0, 1.0, 1.0],       // 15: Bright White
+        [0.0, 0.0, 0.0, 1.0], // 0: Black
+        [0.8, 0.0, 0.0, 1.0], // 1: Red
+        [0.0, 0.8, 0.0, 1.0], // 2: Green
+        [0.8, 0.8, 0.0, 1.0], // 3: Yellow
+        [0.0, 0.0, 0.8, 1.0], // 4: Blue
+        [0.8, 0.0, 0.8, 1.0], // 5: Magenta
+        [0.0, 0.8, 0.8, 1.0], // 6: Cyan
+        [0.8, 0.8, 0.8, 1.0], // 7: White
+        [0.5, 0.5, 0.5, 1.0], // 8: Bright Black
+        [1.0, 0.0, 0.0, 1.0], // 9: Bright Red
+        [0.0, 1.0, 0.0, 1.0], // 10: Bright Green
+        [1.0, 1.0, 0.0, 1.0], // 11: Bright Yellow
+        [0.0, 0.0, 1.0, 1.0], // 12: Bright Blue
+        [1.0, 0.0, 1.0, 1.0], // 13: Bright Magenta
+        [0.0, 1.0, 1.0, 1.0], // 14: Bright Cyan
+        [1.0, 1.0, 1.0, 1.0], // 15: Bright White
     ];
 
     for (i, &color) in basic.iter().enumerate() {
@@ -58,9 +58,21 @@ static ANSI_PALETTE: LazyLock<[[f32; 4]; 256]> = LazyLock::new(|| {
         let g = (i / 6) % 6;
         let b = i % 6;
         palette[16 + i] = [
-            if r > 0 { (r * 40 + 55) as f32 / 255.0 } else { 0.0 },
-            if g > 0 { (g * 40 + 55) as f32 / 255.0 } else { 0.0 },
-            if b > 0 { (b * 40 + 55) as f32 / 255.0 } else { 0.0 },
+            if r > 0 {
+                (r * 40 + 55) as f32 / 255.0
+            } else {
+                0.0
+            },
+            if g > 0 {
+                (g * 40 + 55) as f32 / 255.0
+            } else {
+                0.0
+            },
+            if b > 0 {
+                (b * 40 + 55) as f32 / 255.0
+            } else {
+                0.0
+            },
             1.0,
         ];
     }
@@ -78,13 +90,13 @@ static ANSI_PALETTE: LazyLock<[[f32; 4]; 256]> = LazyLock::new(|| {
 pub enum TextError {
     #[error("Failed to load font: {0}")]
     FontLoad(String),
-    
+
     #[error("Failed to create texture: {0}")]
     TextureCreation(String),
-    
+
     #[error("Glyph not in atlas: {0}")]
     GlyphNotInAtlas(char),
-    
+
     #[error("Atlas is full")]
     AtlasFull,
 }
@@ -221,13 +233,13 @@ impl GlyphAtlas {
             for x in 0..metrics.width {
                 let src_idx = y * metrics.width + x;
                 let alpha = bitmap[src_idx];
-                
+
                 let dst_x = x_offset as usize + x;
                 let dst_y = y_offset as usize + y;
                 let dst_idx = (dst_y * ATLAS_SIZE as usize + dst_x) * 4;
 
                 // Write RGBA (white with alpha from glyph)
-                self.atlas_buffer[dst_idx] = 255;     // R
+                self.atlas_buffer[dst_idx] = 255; // R
                 self.atlas_buffer[dst_idx + 1] = 255; // G
                 self.atlas_buffer[dst_idx + 2] = 255; // B
                 self.atlas_buffer[dst_idx + 3] = alpha; // A
@@ -398,10 +410,14 @@ pub struct TextRenderer {
 
 impl TextRenderer {
     /// Create a new text renderer.
-    pub fn new(device: &Device, font_size: f32, screen_size: (u32, u32)) -> Result<Self, TextError> {
+    pub fn new(
+        device: &Device,
+        font_size: f32,
+        screen_size: (u32, u32),
+    ) -> Result<Self, TextError> {
         let mut atlas = GlyphAtlas::new(device, font_size)?;
         atlas.init_gpu(device);
-        
+
         // Cache common glyphs
         atlas.cache_common_glyphs()?;
 
@@ -555,12 +571,7 @@ impl TextRenderer {
                     default_fg
                 }
             }
-            Color::Rgb(r, g, b) => [
-                r as f32 / 255.0,
-                g as f32 / 255.0,
-                b as f32 / 255.0,
-                1.0,
-            ],
+            Color::Rgb(r, g, b) => [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0],
         }
     }
 
@@ -582,8 +593,11 @@ impl TextRenderer {
             self.atlas.cache_glyph(c)?;
         }
 
-        let glyph = self.atlas.get_glyph(c).ok_or(TextError::GlyphNotInAtlas(c))?;
-        
+        let glyph = self
+            .atlas
+            .get_glyph(c)
+            .ok_or(TextError::GlyphNotInAtlas(c))?;
+
         let (screen_w, screen_h) = self.screen_size;
         let screen_w = screen_w as f32;
         let screen_h = screen_h as f32;
@@ -781,7 +795,7 @@ impl TextRenderer {
         // Upload vertex data
         if !self.vertices.is_empty() {
             let vertex_data: &[u8] = bytemuck::cast_slice(&self.vertices);
-            
+
             // Re-create buffer if needed
             let needed_size = vertex_data.len() as u64;
             if let Some(ref buffer) = self.vertex_buffer {
@@ -802,13 +816,21 @@ impl TextRenderer {
     }
 
     /// Render the queued text.
-    pub fn render<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>, bind_group: &'a wgpu::BindGroup) {
+    pub fn render<'a>(
+        &'a self,
+        render_pass: &mut wgpu::RenderPass<'a>,
+        bind_group: &'a wgpu::BindGroup,
+    ) {
         if self.vertices.is_empty() {
             return;
         }
 
-        let Some(ref pipeline) = self.pipeline else { return };
-        let Some(ref vertex_buffer) = self.vertex_buffer else { return };
+        let Some(ref pipeline) = self.pipeline else {
+            return;
+        };
+        let Some(ref vertex_buffer) = self.vertex_buffer else {
+            return;
+        };
 
         render_pass.set_pipeline(pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
