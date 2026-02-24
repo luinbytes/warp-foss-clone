@@ -5,6 +5,7 @@
 //! - wgpu rendering
 //! - PTY session for shell I/O
 //! - Terminal parsing and grid state
+//! - Layout management for split panes
 
 mod ai;
 mod config;
@@ -20,6 +21,7 @@ use terminal::grid::TerminalGrid;
 use terminal::parser::TerminalParser;
 use terminal::pty::{PtyConfig, PtySession};
 use ui::input::InputHandler;
+use ui::layout::{LayoutTree, Pane, Rect, SplitDirection};
 use ui::selection::{extract_selected_text, Clipboard, SelectionState};
 use winit::{
     application::ApplicationHandler,
@@ -53,12 +55,8 @@ struct TerminalApp {
     window: Option<Arc<Window>>,
     /// GPU renderer - stored as raw parts to avoid lifetime issues
     renderer: Option<RendererHolder>,
-    /// PTY session for shell communication
-    pty: Option<Arc<Mutex<PtySession>>>,
-    /// Terminal parser for escape sequences
-    parser: TerminalParser,
-    /// Terminal grid (screen buffer)
-    grid: TerminalGrid,
+    /// Layout tree managing all panes
+    layout: Option<LayoutTree>,
     /// Input handler for keyboard events
     input_handler: InputHandler,
     /// Selection state for mouse selection
@@ -237,19 +235,65 @@ impl RendererHolder {
         Ok(())
     }
 
-    fn render_grid(
+    fn render_layout(
         &mut self,
-        grid: &terminal::grid::TerminalGrid,
+        layout: &LayoutTree,
+        cell_width: u32,
+        cell_height: u32,
+        focused_pane_id: uuid::Uuid,
     ) -> Result<(), ui::renderer::RendererError> {
         // Clear previous frame's text
         self.text_renderer.clear();
 
-        // Calculate cell dimensions
-        let font_size = self.text_renderer.font_size();
-        let cell_width = font_size * 0.6; // Approximate monospace character width
-        let cell_height = font_size;
+        // Render all panes in the layout
+        self.render_node(layout.root(), cell_width, cell_height, focused_pane_id)?;
 
-        // Render all visible cells
+        // Prepare text renderer (upload glyph atlas and vertex data)
+        self.text_renderer.prepare(&self.device, &self.queue);
+
+        // Render to screen
+        self.render()
+    }
+
+    fn render_node(
+        &mut self,
+        node: &ui::layout::LayoutNode,
+        cell_width: u32,
+        cell_height: u32,
+        focused_pane_id: uuid::Uuid,
+    ) -> Result<(), ui::renderer::RendererError> {
+        use ui::layout::LayoutNode;
+
+        match node {
+            LayoutNode::Pane(pane) => {
+                self.render_pane(pane, cell_width, cell_height, pane.id == focused_pane_id)?;
+            }
+            LayoutNode::HorizontalSplit { children, .. } => {
+                for child in children {
+                    self.render_node(child, cell_width, cell_height, focused_pane_id)?;
+                }
+            }
+            LayoutNode::VerticalSplit { children, .. } => {
+                for child in children {
+                    self.render_node(child, cell_width, cell_height, focused_pane_id)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn render_pane(
+        &mut self,
+        pane: &Pane,
+        cell_width: u32,
+        cell_height: u32,
+        is_focused: bool,
+    ) -> Result<(), ui::renderer::RendererError> {
+        let bounds = pane.bounds;
+        let grid = &pane.grid;
+
+        // Render terminal content
         let rows = grid.rows();
         let cols = grid.cols();
 
@@ -257,8 +301,9 @@ impl RendererHolder {
             for col in 0..cols {
                 if let Some(cell) = grid.get_cell(row, col) {
                     if cell.char != ' ' {
-                        let x = col as f32 * cell_width;
-                        let y = row as f32 * cell_height;
+                        // Offset by pane bounds
+                        let x = bounds.x as f32 + (col as f32 * cell_width as f32);
+                        let y = bounds.y as f32 + (row as f32 * cell_height as f32);
 
                         self.text_renderer.queue_char(
                             cell.char,
@@ -276,11 +321,11 @@ impl RendererHolder {
             }
         }
 
-        // Prepare text renderer (upload glyph atlas and vertex data)
-        self.text_renderer.prepare(&self.device, &self.queue);
+        // Draw pane borders (using characters for now, will improve later)
+        // For focused panes, we could use a different color or style
+        let _ = is_focused; // Use this later for visual feedback
 
-        // Clear screen first, then render text
-        self.render()
+        Ok(())
     }
 }
 
@@ -291,9 +336,7 @@ impl TerminalApp {
         Self {
             window: None,
             renderer: None,
-            pty: None,
-            parser: TerminalParser::with_size(config.cols as usize, config.rows as usize),
-            grid: TerminalGrid::with_size(config.cols as usize, config.rows as usize),
+            layout: None,
             input_handler: InputHandler::new(),
             selection_state: SelectionState::new(),
             clipboard: Clipboard::new(),
@@ -307,8 +350,8 @@ impl TerminalApp {
         }
     }
 
-    /// Initialize the PTY session
-    fn init_pty(&mut self, cols: u16, rows: u16) -> Result<()> {
+    /// Create initial pane with PTY
+    fn create_initial_pane(&self, cols: u16, rows: u16) -> Result<Pane> {
         let config = PtyConfig {
             cols,
             rows,
@@ -316,12 +359,40 @@ impl TerminalApp {
         };
 
         let pty = PtySession::spawn(config)?;
-        self.pty = Some(Arc::new(Mutex::new(pty)));
-        Ok(())
+        let bounds = Rect::new(0, 0, cols as u32 * self.cell_width, rows as u32 * self.cell_height);
+        
+        Ok(Pane::new(pty, cols as usize, rows as usize, bounds))
     }
 
-    /// Read and process PTY output (non-blocking with batching)
-    fn read_pty_output(&mut self) {
+    /// Create a new pane with PTY
+    fn create_pane(&self, cols: usize, rows: usize, bounds: Rect) -> Result<Pane> {
+        let config = PtyConfig {
+            cols: cols as u16,
+            rows: rows as u16,
+            ..Default::default()
+        };
+
+        let pty = PtySession::spawn(config)?;
+        Ok(Pane::new(pty, cols, rows, bounds))
+    }
+
+    /// Read and process PTY output from all panes (non-blocking with batching)
+    fn read_all_pty_output(&mut self) {
+        if let Some(ref mut layout) = self.layout {
+            // Get all pane IDs
+            let pane_ids = layout.all_pane_ids();
+            
+            // Read from each pane
+            for pane_id in pane_ids {
+                if let Some(pane) = layout.get_pane_mut(pane_id) {
+                    Self::read_pane_output(pane);
+                }
+            }
+        }
+    }
+
+    /// Read and process PTY output from a single pane
+    fn read_pane_output(pane: &mut Pane) {
         // Batch read from PTY - accumulate multiple reads before processing
         let mut data = Vec::with_capacity(16384); // Start with 16KB capacity
 
@@ -330,34 +401,29 @@ impl TerminalApp {
         for _ in 0..5 {
             // Attempt to read more data (limit to 5 attempts to avoid blocking)
             let read_result = {
-                if let Some(ref pty) = self.pty {
-                    if let Ok(session) = pty.lock() {
-                        let mut buf = vec![0u8; 4096];
-                        match session.read(&mut buf) {
-                            Ok(0) => {
-                                // EOF - PTY closed
-                                tracing::info!("PTY closed");
-                                self.running = false;
-                                return;
-                            }
-                            Ok(n) => {
-                                buf.truncate(n);
-                                (true, Some(buf))
-                            }
-                            Err(e) => {
-                                // Would block is expected when no data available
-                                let err_str = e.to_string();
-                                if !err_str.contains("Would block")
-                                    && !err_str.contains("Resource temporarily unavailable")
-                                {
-                                    tracing::debug!("PTY read error: {}", e);
-                                }
-                                // No more data available
-                                break;
-                            }
+                if let Ok(mut session) = pane.pty.lock() {
+                    let mut buf = vec![0u8; 4096];
+                    match session.read(&mut buf) {
+                        Ok(0) => {
+                            // EOF - PTY closed
+                            tracing::info!("PTY closed for pane {}", pane.id);
+                            return;
                         }
-                    } else {
-                        (false, None)
+                        Ok(n) => {
+                            buf.truncate(n);
+                            (true, Some(buf))
+                        }
+                        Err(e) => {
+                            // Would block is expected when no data available
+                            let err_str = e.to_string();
+                            if !err_str.contains("Would block")
+                                && !err_str.contains("Resource temporarily unavailable")
+                            {
+                                tracing::debug!("PTY read error: {}", e);
+                            }
+                            // No more data available
+                            break;
+                        }
                     }
                 } else {
                     (false, None)
@@ -380,40 +446,39 @@ impl TerminalApp {
 
         // Process the data if we accumulated any
         if has_data && !data.is_empty() {
-            self.process_terminal_output(&data);
+            Self::process_pane_output(pane, &data);
         }
     }
 
-    /// Process terminal output bytes through the parser to the grid.
-    ///
-    /// This is the main pipeline: PTY bytes → Parser (escape sequences) → Grid (screen buffer)
-    ///
-    /// Uses batch mode to optimize grid updates when processing large amounts of data.
-    fn process_terminal_output(&mut self, data: &[u8]) {
+    /// Process terminal output bytes through the parser to the grid for a specific pane.
+    fn process_pane_output(pane: &mut Pane, data: &[u8]) {
         // Sync grid colors/attributes from parser state before processing
-        self.grid.set_foreground(self.parser.state.fg_color);
-        self.grid.set_background(self.parser.state.bg_color);
-        self.grid.set_attributes(self.parser.state.attributes);
+        pane.grid.set_foreground(pane.parser.state.fg_color);
+        pane.grid.set_background(pane.parser.state.bg_color);
+        pane.grid.set_attributes(pane.parser.state.attributes);
 
         // Use batch mode for grid updates to reduce overhead
-        // This buffers all cell updates and applies them in a single pass
-        self.grid.begin_batch();
+        pane.grid.begin_batch();
 
         // Parse bytes and output directly to the grid
-        // This handles escape sequences and writes characters to the grid
-        self.parser.parse_bytes_with_output(data, &mut self.grid);
+        pane.parser.parse_bytes_with_output(data, &mut pane.grid);
 
-        // Flush batched updates and calculate dirty region
-        self.grid.flush_batch();
+        // Flush batched updates
+        pane.grid.flush_batch();
     }
 
-    /// Send input to the PTY
+    /// Send input to the focused pane's PTY
     fn send_pty_input(&mut self, data: &[u8]) {
         if !data.is_empty() {
-            if let Some(ref pty) = self.pty {
-                if let Ok(mut session) = pty.lock() {
-                    if let Err(e) = session.write(data) {
-                        tracing::error!("Failed to write to PTY: {}", e);
+            if let Some(ref layout) = self.layout {
+                let focused_id = layout.focused_pane_id();
+                if let Some(ref mut layout) = self.layout {
+                    if let Some(pane) = layout.get_pane_mut(focused_id) {
+                        if let Ok(mut session) = pane.pty.lock() {
+                            if let Err(e) = session.write(data) {
+                                tracing::error!("Failed to write to PTY: {}", e);
+                            }
+                        }
                     }
                 }
             }
@@ -427,22 +492,29 @@ impl TerminalApp {
             renderer.resize(width, height);
         }
 
-        // Calculate new terminal dimensions (assuming 10x20 pixel cells)
-        let cell_width = 10u32;
-        let cell_height = 20u32;
-        let new_cols = (width / cell_width) as usize;
-        let new_rows = (height / cell_height) as usize;
+        // Calculate layout bounds
+        let total_bounds = Rect::new(0, 0, width, height);
 
-        // Resize the terminal grid
-        if new_cols > 0 && new_rows > 0 {
-            self.grid.resize(new_cols, new_rows);
-            self.parser.resize(new_cols, new_rows);
+        // Update layout and recalculate all pane bounds
+        if let Some(ref mut layout) = self.layout {
+            layout.calculate_layout(total_bounds);
 
-            // Resize the PTY
-            if let Some(ref pty) = self.pty {
-                if let Ok(mut session) = pty.lock() {
-                    if let Err(e) = session.resize(new_cols as u16, new_rows as u16) {
-                        tracing::error!("Failed to resize PTY: {}", e);
+            // Resize each pane's grid and PTY based on new bounds
+            let pane_ids = layout.all_pane_ids();
+            for pane_id in pane_ids {
+                if let Some(pane) = layout.get_pane_mut(pane_id) {
+                    let (new_cols, new_rows) = pane.terminal_size(self.cell_width, self.cell_height);
+
+                    if new_cols > 0 && new_rows > 0 {
+                        pane.grid.resize(new_cols, new_rows);
+                        pane.parser.resize(new_cols, new_rows);
+
+                        // Resize the PTY
+                        if let Ok(mut session) = pane.pty.lock() {
+                            if let Err(e) = session.resize(new_cols as u16, new_rows as u16) {
+                                tracing::error!("Failed to resize PTY: {}", e);
+                            }
+                        }
                     }
                 }
             }
@@ -451,23 +523,35 @@ impl TerminalApp {
 
     /// Render a frame
     fn render(&mut self) {
-        if let Some(ref mut renderer) = self.renderer {
-            if let Err(e) = renderer.render_grid(&self.grid) {
+        if let (Some(ref mut renderer), Some(ref layout)) = (&mut self.renderer, &self.layout) {
+            let focused_id = layout.focused_pane_id();
+            if let Err(e) = renderer.render_layout(layout, self.cell_width, self.cell_height, focused_id) {
                 tracing::error!("Render error: {}", e);
             }
         }
     }
 
-    /// Convert pixel position to grid coordinates
-    fn pixel_to_grid(&self, x: f64, y: f64) -> Option<(usize, usize)> {
-        let col = (x / self.cell_width as f64) as usize;
-        let row = (y / self.cell_height as f64) as usize;
+    /// Convert pixel position to grid coordinates (and pane ID)
+    fn pixel_to_pane_and_grid(&self, x: f64, y: f64) -> Option<(uuid::Uuid, usize, usize)> {
+        if let Some(ref layout) = self.layout {
+            let pane_ids = layout.all_pane_ids();
+            for pane_id in pane_ids {
+                if let Some(pane) = layout.get_pane(pane_id) {
+                    if pane.bounds.contains(x as u32, y as u32) {
+                        // Click is within this pane
+                        let local_x = x as u32 - pane.bounds.x;
+                        let local_y = y as u32 - pane.bounds.y;
+                        let col = (local_x / self.cell_width) as usize;
+                        let row = (local_y / self.cell_height) as usize;
 
-        if col < self.grid.cols() && row < self.grid.rows() {
-            Some((col, row))
-        } else {
-            None
+                        if col < pane.grid.cols() && row < pane.grid.rows() {
+                            return Some((pane_id, col, row));
+                        }
+                    }
+                }
+            }
         }
+        None
     }
 
     /// Handle mouse button press
@@ -483,7 +567,12 @@ impl TerminalApp {
         }
 
         if let Some(pos) = self.cursor_position {
-            if let Some((col, row)) = self.pixel_to_grid(pos.x, pos.y) {
+            if let Some((pane_id, col, row)) = self.pixel_to_pane_and_grid(pos.x, pos.y) {
+                // Focus the clicked pane
+                if let Some(ref mut layout) = self.layout {
+                    layout.set_focus(pane_id);
+                }
+
                 use crate::terminal::grid::Cursor;
 
                 match state {
@@ -497,15 +586,20 @@ impl TerminalApp {
 
                         // If Shift is held, copy to clipboard
                         if self.modifiers.shift_key() && self.selection_state.has_selection() {
-                            let selected_text = extract_selected_text(
-                                self.grid.as_rows(),
-                                &self.selection_state.region,
-                            );
-                            if !selected_text.is_empty() {
-                                if let Err(e) = self.clipboard.copy(&selected_text) {
-                                    tracing::warn!("Failed to copy to clipboard: {}", e);
-                                } else {
-                                    tracing::debug!("Copied selection to clipboard");
+                            // Get the focused pane's grid
+                            if let Some(ref layout) = self.layout {
+                                if let Some(pane) = layout.focused_pane() {
+                                    let selected_text = extract_selected_text(
+                                        pane.grid.as_rows(),
+                                        &self.selection_state.region,
+                                    );
+                                    if !selected_text.is_empty() {
+                                        if let Err(e) = self.clipboard.copy(&selected_text) {
+                                            tracing::warn!("Failed to copy to clipboard: {}", e);
+                                        } else {
+                                            tracing::debug!("Copied selection to clipboard");
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -525,7 +619,7 @@ impl TerminalApp {
 
         // Only update selection if we're currently selecting
         if self.selection_state.selecting {
-            if let Some((col, row)) = self.pixel_to_grid(position.x, position.y) {
+            if let Some((_pane_id, col, row)) = self.pixel_to_pane_and_grid(position.x, position.y) {
                 use crate::terminal::grid::Cursor;
                 self.selection_state.update_selection(Cursor::new(row, col));
             }
@@ -543,6 +637,58 @@ impl TerminalApp {
             }
         }
         Ok(())
+    }
+
+    /// Handle pane split request
+    fn handle_split(&mut self, direction: SplitDirection) {
+        // Get focused pane info first to avoid borrow conflicts
+        let pane_info = if let Some(ref layout) = self.layout {
+            if let Some(focused) = layout.focused_pane() {
+                let (cols, rows) = focused.terminal_size(self.cell_width, self.cell_height);
+                let new_bounds = Rect::new(0, 0, focused.bounds.width / 2, focused.bounds.height);
+                Some((cols, rows, new_bounds))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Create new pane if we got info
+        if let Some((cols, rows, new_bounds)) = pane_info {
+            match self.create_pane(cols, rows, new_bounds) {
+                Ok(new_pane) => {
+                    // Now do the split
+                    if let Some(ref mut layout) = self.layout {
+                        if let Err(e) = layout.split_focused(direction, new_pane) {
+                            tracing::warn!("Failed to split pane: {}", e);
+                        } else {
+                            // Recalculate layout
+                            if let Some(ref window) = self.window {
+                                let size = window.inner_size();
+                                self.handle_resize(size.width, size.height);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create new pane: {}", e);
+                }
+            }
+        }
+    }
+
+    /// Handle focus navigation
+    fn handle_focus_next(&mut self) {
+        if let Some(ref mut layout) = self.layout {
+            layout.focus_next();
+        }
+    }
+
+    fn handle_focus_prev(&mut self) {
+        if let Some(ref mut layout) = self.layout {
+            layout.focus_prev();
+        }
     }
 }
 
@@ -564,8 +710,8 @@ impl ApplicationHandler for TerminalApp {
 
         // Get initial size
         let size = window.inner_size();
-        let cols = (size.width / 10) as u16;
-        let rows = (size.height / 20) as u16;
+        let cols = (size.width / self.cell_width) as u16;
+        let rows = (size.height / self.cell_height) as u16;
 
         // Initialize renderer
         let renderer = match pollster::block_on(RendererHolder::new(Arc::clone(&window))) {
@@ -577,15 +723,21 @@ impl ApplicationHandler for TerminalApp {
             }
         };
 
-        // Initialize PTY
-        if let Err(e) = self.init_pty(cols.max(40), rows.max(10)) {
-            tracing::error!("Failed to initialize PTY: {}", e);
-            event_loop.exit();
-            return;
-        }
+        // Create initial pane and layout
+        let initial_pane = match self.create_initial_pane(cols.max(40), rows.max(10)) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!("Failed to create initial pane: {}", e);
+                event_loop.exit();
+                return;
+            }
+        };
+
+        let layout = LayoutTree::new(initial_pane);
 
         self.window = Some(window);
         self.renderer = Some(renderer);
+        self.layout = Some(layout);
         self.running = true;
 
         // Initialize clipboard (must be done from main thread)
@@ -593,7 +745,7 @@ impl ApplicationHandler for TerminalApp {
             tracing::warn!("Failed to initialize clipboard: {}", e);
         }
 
-        tracing::info!("Terminal application started");
+        tracing::info!("Terminal application started with layout support");
     }
 
     fn window_event(
@@ -613,24 +765,58 @@ impl ApplicationHandler for TerminalApp {
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
-                // Check for paste shortcuts
-                let is_paste = match &event.logical_key {
-                    Key::Named(NamedKey::Paste) => true,
-                    Key::Character(c) if c == "v" || c == "V" => {
-                        self.input_handler.modifiers().ctrl
+                // Check for special shortcuts
+                if event.state == ElementState::Pressed {
+                    // Check for pane splitting (Ctrl+D for horizontal, Ctrl+Shift+D for vertical)
+                    match &event.logical_key {
+                        Key::Character(c) if c == "d" || c == "D" => {
+                            let modifiers = self.input_handler.modifiers();
+                            if modifiers.ctrl {
+                                if modifiers.shift {
+                                    // Ctrl+Shift+D = Vertical split
+                                    self.handle_split(SplitDirection::Vertical);
+                                    return;
+                                } else {
+                                    // Ctrl+D = Horizontal split
+                                    self.handle_split(SplitDirection::Horizontal);
+                                    return;
+                                }
+                            }
+                        }
+                        Key::Named(NamedKey::Tab) => {
+                            let modifiers = self.input_handler.modifiers();
+                            if modifiers.shift {
+                                // Shift+Tab = Focus previous pane
+                                self.handle_focus_prev();
+                            } else if modifiers.ctrl {
+                                // Ctrl+Tab = Focus next pane
+                                self.handle_focus_next();
+                            }
+                            return;
+                        }
+                        _ => {}
                     }
-                    Key::Character(c) if c == "i" || c == "I" => {
-                        self.input_handler.modifiers().shift
-                    }
-                    _ => false,
-                };
 
-                if is_paste && event.state == ElementState::Pressed {
-                    let _ = self.handle_paste();
-                } else {
-                    let input = self.input_handler.handle_key_event(&event);
-                    let data = input.to_bytes();
-                    self.send_pty_input(&data);
+                    // Check for paste shortcuts
+                    let is_paste = match &event.logical_key {
+                        Key::Named(NamedKey::Paste) => true,
+                        Key::Character(c) if c == "v" || c == "V" => {
+                            self.input_handler.modifiers().ctrl
+                        }
+                        Key::Character(c) if c == "i" || c == "I" => {
+                            self.input_handler.modifiers().shift
+                        }
+                        _ => false,
+                    };
+
+                    if is_paste {
+                        let _ = self.handle_paste();
+                    } else {
+                        // Normal input
+                        let input = self.input_handler.handle_key_event(&event);
+                        let data = input.to_bytes();
+                        self.send_pty_input(&data);
+                    }
                 }
             }
 
@@ -650,8 +836,8 @@ impl ApplicationHandler for TerminalApp {
             }
 
             WindowEvent::RedrawRequested => {
-                // Read and process any pending PTY output
-                self.read_pty_output();
+                // Read and process any pending PTY output from all panes
+                self.read_all_pty_output();
 
                 // Render
                 self.render();
@@ -668,7 +854,7 @@ impl ApplicationHandler for TerminalApp {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         // Process PTY output periodically
-        self.read_pty_output();
+        self.read_all_pty_output();
 
         // Limit frame rate
         let elapsed = self.last_frame.elapsed();
@@ -699,7 +885,7 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     tracing::info!("Warp FOSS v0.1.0");
-    tracing::info!("Starting terminal application...");
+    tracing::info!("Starting terminal application with split pane support...");
 
     // Create event loop
     let event_loop = EventLoop::new()?;
