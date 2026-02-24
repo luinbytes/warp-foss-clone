@@ -5,7 +5,7 @@
 use crate::terminal::grid::TerminalGrid;
 use crate::terminal::parser::TerminalParser;
 use crate::terminal::pty::PtySession;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use uuid::Uuid;
 
 /// Rectangle representing a pane's bounds
@@ -743,13 +743,29 @@ fn resize_pane_in_node(
     }
 }
 
+/// Cached PTY for placeholder panes (avoids spawning multiple times on Windows)
+static PLACEHOLDER_PTY: OnceLock<Arc<Mutex<PtySession>>> = OnceLock::new();
+
 /// Create a placeholder pane (used internally for tree manipulation)
+///
+/// Uses a cached PTY to avoid stack overflow on Windows from spawning
+/// multiple PTY sessions during tree restructuring.
 fn create_placeholder_pane() -> Pane {
-    // This creates a minimal pane for temporary use during tree restructuring
-    // It should never be rendered or used by the user
-    use crate::terminal::pty::PtyConfig;
-    let pty = PtySession::spawn(PtyConfig::default()).unwrap();
-    Pane::new(pty, 1, 1, Rect::new(0, 0, 1, 1))
+    use std::sync::Arc;
+    let pty = PLACEHOLDER_PTY.get_or_init(|| {
+        use crate::terminal::pty::PtyConfig;
+        let pty_session = PtySession::spawn(PtyConfig::default()).unwrap();
+        Arc::new(Mutex::new(pty_session))
+    });
+
+    Pane {
+        id: uuid::Uuid::new_v4(),
+        title: "Placeholder".to_string(),
+        pty: Arc::clone(pty),
+        grid: TerminalGrid::with_size(1, 1),
+        parser: TerminalParser::new(),
+        bounds: Rect::new(0, 0, 1, 1),
+    }
 }
 
 #[cfg(test)]
