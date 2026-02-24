@@ -4,7 +4,9 @@
 //! for command suggestions, explanations, and assistance.
 
 use crate::ai::openai::{OpenAIConfig, OpenAIProvider};
-use crate::ai::provider::AIProvider;
+use crate::ai::provider::{AIProvider, CompletionOptions};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Instant;
 
 /// State of the AI command palette
@@ -27,7 +29,7 @@ pub struct AICommandPalette {
     /// User input buffer
     pub input: String,
     /// AI response buffer
-    pub response: String,
+    pub response: Arc<Mutex<String>>,
     /// Cursor position in input buffer
     pub cursor_pos: usize,
     /// OpenAI provider (optional - may not be configured)
@@ -44,7 +46,7 @@ impl AICommandPalette {
         Self {
             state: PaletteState::Hidden,
             input: String::new(),
-            response: String::new(),
+            response: Arc::new(Mutex::new(String::new())),
             cursor_pos: 0,
             provider: None,
             processing_start: None,
@@ -67,7 +69,9 @@ impl AICommandPalette {
     pub fn open(&mut self) {
         self.state = PaletteState::Open;
         self.input.clear();
-        self.response.clear();
+        if let Ok(mut response) = self.response.lock() {
+            response.clear();
+        }
         self.cursor_pos = 0;
         self.error = None;
     }
@@ -76,7 +80,9 @@ impl AICommandPalette {
     pub fn close(&mut self) {
         self.state = PaletteState::Hidden;
         self.input.clear();
-        self.response.clear();
+        if let Ok(mut response) = self.response.lock() {
+            response.clear();
+        }
         self.cursor_pos = 0;
         self.error = None;
     }
@@ -171,38 +177,51 @@ impl AICommandPalette {
         if let Some(provider) = &self.provider {
             self.state = PaletteState::Processing;
             self.processing_start = Some(Instant::now());
-            self.response.clear();
+            if let Ok(mut response) = self.response.lock() {
+                response.clear();
+            }
             self.error = None;
 
-            // For now, we'll handle this synchronously in a blocking way
-            // In a real implementation, this would be async with proper UI feedback
+            // Clone necessary data for the async thread
             let prompt = format!(
-                "You are a terminal assistant. The user asks: {}\n\nProvide a helpful response that could be a command, explanation, or guidance.",
+                "You are a terminal assistant. The user asks: {}\n\nProvide a helpful response. If suggesting a command, put it in a code block. Keep responses concise.",
                 self.input
             );
+            let api_key = provider.api_key().to_string();
+            let model = provider.model().to_string();
+            let response_arc = Arc::clone(&self.response);
 
-            // Note: This is a blocking call. In production, this should be async
-            // and the UI should show a loading indicator
-            match tokio::runtime::Handle::try_current() {
-                Ok(handle) => {
-                    // We're in a tokio runtime, use it
-                    let provider_clone = OpenAIProvider::new(OpenAIConfig {
-                        api_key: provider.api_key().to_string(),
-                        model: provider.model().to_string(),
-                    });
+            // Spawn a thread with tokio runtime to handle the async API call
+            thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async {
+                    let config = OpenAIConfig {
+                        api_key,
+                        model,
+                    };
+                    let async_provider = OpenAIProvider::new(config);
 
-                    // This is a simplified synchronous wrapper
-                    // In production, we'd use proper async/await with UI updates
-                    self.response = "AI integration requires async runtime. This is a placeholder.".to_string();
-                    self.state = PaletteState::ShowingResponse;
-                }
-                Err(_) => {
-                    self.error = Some("No async runtime available".to_string());
-                    self.state = PaletteState::Open;
-                }
-            }
+                    let opts = CompletionOptions {
+                        max_tokens: Some(500),
+                        temperature: Some(0.7),
+                    };
+
+                    match async_provider.complete(&prompt, Some(opts)).await {
+                        Ok(result) => {
+                            if let Ok(mut response) = response_arc.lock() {
+                                *response = result;
+                            }
+                        }
+                        Err(e) => {
+                            if let Ok(mut response) = response_arc.lock() {
+                                *response = format!("Error: {}", e);
+                            }
+                        }
+                    }
+                });
+            });
         } else {
-            self.error = Some("AI provider not configured. Please set up OpenAI API key.".to_string());
+            self.error = Some("AI provider not configured. Please set up OpenAI API key using: warp-foss config set-openai-key <key>".to_string());
         }
     }
 
@@ -224,7 +243,24 @@ impl AICommandPalette {
                 self.error = Some("AI request timed out".to_string());
                 self.state = PaletteState::Open;
                 self.processing_start = None;
+            } else {
+                // Check if response is ready
+                if let Ok(response) = self.response.lock() {
+                    if !response.is_empty() {
+                        self.state = PaletteState::ShowingResponse;
+                        self.processing_start = None;
+                    }
+                }
             }
+        }
+    }
+
+    /// Get the current response text
+    pub fn get_response(&self) -> String {
+        if let Ok(response) = self.response.lock() {
+            response.clone()
+        } else {
+            String::new()
         }
     }
 }
@@ -244,7 +280,9 @@ mod tests {
         let palette = AICommandPalette::new();
         assert_eq!(palette.state, PaletteState::Hidden);
         assert!(palette.input.is_empty());
-        assert!(palette.response.is_empty());
+        if let Ok(response) = palette.response.lock() {
+            assert!(response.is_empty());
+        }; // Semicolon to drop the guard
     }
 
     #[test]
@@ -312,5 +350,16 @@ mod tests {
         let suggestions = palette.get_suggestions("test context");
         assert!(!suggestions.is_empty());
         assert!(suggestions.contains(&"explain last command".to_string()));
+    }
+
+    #[test]
+    fn test_get_response() {
+        let palette = AICommandPalette::new();
+        {
+            if let Ok(mut response) = palette.response.lock() {
+                *response = "Test response".to_string();
+            }
+        }
+        assert_eq!(palette.get_response(), "Test response");
     }
 }

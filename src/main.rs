@@ -252,12 +252,18 @@ impl RendererHolder {
         focused_pane_id: uuid::Uuid,
         search_state: &SearchState,
         search_input: &str,
+        ai_palette: &AICommandPalette,
     ) -> Result<(), ui::renderer::RendererError> {
         // Clear previous frame's text
         self.text_renderer.clear();
 
         // Render all panes in the layout
         self.render_node(layout.root(), cell_width, cell_height, focused_pane_id, search_state, search_input)?;
+
+        // Render AI palette overlay if visible
+        if ai_palette.is_visible() {
+            self.render_ai_palette(ai_palette, cell_width, cell_height)?;
+        }
 
         // Prepare text renderer (upload glyph atlas and vertex data)
         self.text_renderer.prepare(&self.device, &self.queue);
@@ -457,6 +463,254 @@ impl RendererHolder {
                     y,
                     search_hint,
                     search_bg,
+                    false,
+                    false,
+                    false,
+                    false,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn render_ai_palette(
+        &mut self,
+        ai_palette: &AICommandPalette,
+        cell_width: u32,
+        cell_height: u32,
+    ) -> Result<(), ui::renderer::RendererError> {
+        use crate::ui::ai_command_palette::PaletteState;
+        use terminal::parser::Color;
+
+        if !ai_palette.is_visible() {
+            return Ok(());
+        }
+
+        // Calculate palette dimensions and position (centered)
+        let palette_width = 80usize; // characters
+        let palette_height = 10usize; // lines
+
+        let surface_width = self.config.width;
+        let surface_height = self.config.height;
+
+        let palette_x = ((surface_width / cell_width).saturating_sub(palette_width as u32) / 2) as f32 * cell_width as f32;
+        let palette_y = ((surface_height / cell_height).saturating_sub(palette_height as u32) / 2) as f32 * cell_height as f32;
+
+        // Colors
+        let bg_color = Color::Rgb(30, 30, 40);
+        let border_color = Color::Rgb(100, 149, 237); // Cornflower blue
+        let text_color = Color::Rgb(255, 255, 255);
+        let hint_color = Color::Rgb(150, 150, 150);
+        let cursor_color = Color::Rgb(255, 215, 0); // Gold
+
+        // Draw background and border
+        for row in 0..palette_height {
+            for col in 0..palette_width {
+                let char_x = palette_x + (col as f32 * cell_width as f32);
+                let char_y = palette_y + (row as f32 * cell_height as f32);
+
+                let (ch, fg, bg) = if row == 0 || row == palette_height - 1 {
+                    // Top or bottom border
+                    if col == 0 || col == palette_width - 1 {
+                        ('+', border_color, bg_color)
+                    } else {
+                        ('-', border_color, bg_color)
+                    }
+                } else if col == 0 || col == palette_width - 1 {
+                    // Side borders
+                    ('|', border_color, bg_color)
+                } else {
+                    // Interior
+                    (' ', text_color, bg_color)
+                };
+
+                self.text_renderer.queue_char(
+                    ch,
+                    char_x,
+                    char_y,
+                    fg,
+                    bg,
+                    false,
+                    false,
+                    false,
+                    false,
+                )?;
+            }
+        }
+
+        // Draw title
+        let title = match ai_palette.state {
+            PaletteState::Open => " AI Command Palette ",
+            PaletteState::Processing => " AI Processing... ",
+            PaletteState::ShowingResponse => " AI Response ",
+            _ => " AI Command Palette ",
+        };
+
+        let title_x = palette_x + (2.0 * cell_width as f32);
+        let title_y = palette_y + cell_height as f32;
+
+        for (i, ch) in title.chars().enumerate() {
+            if i + 2 >= palette_width - 2 {
+                break;
+            }
+            self.text_renderer.queue_char(
+                ch,
+                title_x + (i as f32 * cell_width as f32),
+                title_y,
+                border_color,
+                bg_color,
+                true,
+                false,
+                false,
+                false,
+            )?;
+        }
+
+        // Draw input prompt or response based on state
+        let content_y = palette_y + (3.0 * cell_height as f32);
+        let content_x = palette_x + (2.0 * cell_width as f32);
+        let max_content_width = palette_width - 4;
+
+        match ai_palette.state {
+            PaletteState::Open => {
+                // Draw prompt
+                let prompt_label = "> ";
+                for (i, ch) in prompt_label.chars().enumerate() {
+                    self.text_renderer.queue_char(
+                        ch,
+                        content_x + (i as f32 * cell_width as f32),
+                        content_y,
+                        hint_color,
+                        bg_color,
+                        false,
+                        false,
+                        false,
+                        false,
+                    )?;
+                }
+
+                // Draw input text
+                let input_start = prompt_label.len();
+                for (i, ch) in ai_palette.input.chars().enumerate() {
+                    if i + input_start >= max_content_width {
+                        break;
+                    }
+                    self.text_renderer.queue_char(
+                        ch,
+                        content_x + ((input_start + i) as f32 * cell_width as f32),
+                        content_y,
+                        text_color,
+                        bg_color,
+                        false,
+                        false,
+                        false,
+                        false,
+                    )?;
+                }
+
+                // Draw cursor
+                let cursor_pos = input_start + ai_palette.cursor_pos;
+                if cursor_pos < max_content_width {
+                    self.text_renderer.queue_char(
+                        '▏',
+                        content_x + (cursor_pos as f32 * cell_width as f32),
+                        content_y,
+                        cursor_color,
+                        bg_color,
+                        false,
+                        false,
+                        false,
+                        false,
+                    )?;
+                }
+
+                // Draw hint
+                let hint = "Press Enter to submit, Esc to close";
+                let hint_y = palette_y + ((palette_height - 2) as f32 * cell_height as f32);
+                for (i, ch) in hint.chars().enumerate() {
+                    if i >= max_content_width {
+                        break;
+                    }
+                    self.text_renderer.queue_char(
+                        ch,
+                        content_x + (i as f32 * cell_width as f32),
+                        hint_y,
+                        hint_color,
+                        bg_color,
+                        false,
+                        false,
+                        false,
+                        false,
+                    )?;
+                }
+            }
+            PaletteState::Processing => {
+                // Draw processing indicator
+                let processing_text = "⠋ Contacting AI...";
+                for (i, ch) in processing_text.chars().enumerate() {
+                    if i >= max_content_width {
+                        break;
+                    }
+                    self.text_renderer.queue_char(
+                        ch,
+                        content_x + (i as f32 * cell_width as f32),
+                        content_y,
+                        hint_color,
+                        bg_color,
+                        false,
+                        false,
+                        false,
+                        false,
+                    )?;
+                }
+            }
+            PaletteState::ShowingResponse => {
+                // Draw response
+                let response = ai_palette.get_response();
+                let response_lines: Vec<&str> = response.lines().collect();
+
+                for (line_idx, line) in response_lines.iter().enumerate() {
+                    if line_idx >= palette_height - 5 {
+                        break; // Don't overflow the palette
+                    }
+
+                    let line_y = content_y + (line_idx as f32 * cell_height as f32);
+
+                    for (i, ch) in line.chars().enumerate() {
+                        if i >= max_content_width {
+                            break;
+                        }
+                        self.text_renderer.queue_char(
+                            ch,
+                            content_x + (i as f32 * cell_width as f32),
+                            line_y,
+                            text_color,
+                            bg_color,
+                            false,
+                            false,
+                            false,
+                            false,
+                        )?;
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        // Draw error if present
+        if let Some(ref error) = ai_palette.error {
+            let error_y = palette_y + ((palette_height - 2) as f32 * cell_height as f32);
+            for (i, ch) in error.chars().enumerate() {
+                if i >= max_content_width {
+                    break;
+                }
+                self.text_renderer.queue_char(
+                    ch,
+                    content_x + (i as f32 * cell_width as f32),
+                    error_y,
+                    Color::Rgb(255, 100, 100),
+                    bg_color,
                     false,
                     false,
                     false,
@@ -784,6 +1038,9 @@ impl TerminalApp {
 
     /// Render a frame
     fn render(&mut self) {
+        // Update AI palette state (check for async responses)
+        self.ai_palette.update();
+
         if let (Some(ref mut renderer), Some(ref layout)) = (&mut self.renderer, &self.layout) {
             let focused_id = layout.focused_pane_id();
             if let Err(e) = renderer.render_layout(
@@ -793,6 +1050,7 @@ impl TerminalApp {
                 focused_id,
                 &self.search_state,
                 &self.search_input,
+                &self.ai_palette,
             ) {
                 tracing::error!("Render error: {}", e);
             }
