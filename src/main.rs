@@ -26,6 +26,7 @@ use ui::input::InputHandler;
 use search::SearchState;
 use ui::layout::{LayoutTree, Pane, Rect, SplitDirection};
 use ui::selection::{extract_selected_text, Clipboard, SelectionState};
+use ui::status_bar::StatusBar;
 use winit::{
     application::ApplicationHandler,
     dpi::{PhysicalPosition, PhysicalSize},
@@ -85,6 +86,8 @@ struct TerminalApp {
     search_input: String,
     /// AI command palette
     ai_palette: AICommandPalette,
+    /// Status bar
+    status_bar: StatusBar,
 }
 
 /// Type-erased renderer holder to work around lifetime issues
@@ -253,6 +256,7 @@ impl RendererHolder {
         search_state: &SearchState,
         search_input: &str,
         ai_palette: &AICommandPalette,
+        status_bar: &StatusBar,
     ) -> Result<(), ui::renderer::RendererError> {
         // Clear previous frame's text
         self.text_renderer.clear();
@@ -263,6 +267,11 @@ impl RendererHolder {
         // Render AI palette overlay if visible
         if ai_palette.is_visible() {
             self.render_ai_palette(ai_palette, cell_width, cell_height)?;
+        }
+
+        // Render status bar if visible
+        if status_bar.is_visible() {
+            self.render_status_bar(status_bar, cell_width, cell_height)?;
         }
 
         // Prepare text renderer (upload glyph atlas and vertex data)
@@ -722,6 +731,143 @@ impl RendererHolder {
         Ok(())
     }
 
+    fn render_status_bar(
+        &mut self,
+        status_bar: &StatusBar,
+        cell_width: u32,
+        cell_height: u32,
+    ) -> Result<(), ui::renderer::RendererError> {
+        use terminal::parser::Color;
+
+        if !status_bar.is_visible() {
+            return Ok(());
+        }
+
+        // Calculate status bar position (bottom of screen)
+        let surface_height = self.config.height;
+        let status_bar_y = (surface_height - cell_height) as f32;
+
+        // Status bar colors
+        let bg_color = Color::Rgb(40, 44, 52); // Dark blue-gray
+        let text_color = Color::Rgb(171, 178, 191); // Light gray
+        let branch_color = Color::Rgb(152, 195, 121); // Green for git branch
+        let separator_color = Color::Rgb(97, 175, 239); // Blue for separators
+
+        // Draw background
+        let bar_width = (self.config.width / cell_width) as usize;
+        for col in 0..bar_width {
+            let char_x = (col as f32) * (cell_width as f32);
+            self.text_renderer.queue_char(
+                ' ',
+                char_x,
+                status_bar_y,
+                text_color,
+                bg_color,
+                false,
+                false,
+                false,
+                false,
+            )?;
+        }
+
+        // Draw directory
+        let mut current_x = 2.0 * cell_width as f32;
+        let dir_icon = "📁 ";
+        for ch in dir_icon.chars() {
+            self.text_renderer.queue_char(
+                ch,
+                current_x,
+                status_bar_y,
+                text_color,
+                bg_color,
+                false,
+                false,
+                false,
+                false,
+            )?;
+            current_x += cell_width as f32;
+        }
+
+        for ch in status_bar.current_dir.chars() {
+            if (current_x / cell_width as f32) as usize >= bar_width - 20 {
+                break; // Leave space for git branch
+            }
+            self.text_renderer.queue_char(
+                ch,
+                current_x,
+                status_bar_y,
+                text_color,
+                bg_color,
+                false,
+                false,
+                false,
+                false,
+            )?;
+            current_x += cell_width as f32;
+        }
+
+        // Draw git branch if available
+        if let Some(ref branch) = status_bar.git_branch {
+            // Add separator
+            current_x += cell_width as f32;
+            let separator = "│";
+            for ch in separator.chars() {
+                self.text_renderer.queue_char(
+                    ch,
+                    current_x,
+                    status_bar_y,
+                    separator_color,
+                    bg_color,
+                    false,
+                    false,
+                    false,
+                    false,
+                )?;
+                current_x += cell_width as f32;
+            }
+
+            current_x += cell_width as f32;
+
+            // Draw git icon
+            let git_icon = " ";
+            for ch in git_icon.chars() {
+                self.text_renderer.queue_char(
+                    ch,
+                    current_x,
+                    status_bar_y,
+                    branch_color,
+                    bg_color,
+                    false,
+                    false,
+                    false,
+                    false,
+                )?;
+                current_x += cell_width as f32;
+            }
+
+            // Draw branch name
+            for ch in branch.chars() {
+                if (current_x / cell_width as f32) as usize >= bar_width - 2 {
+                    break;
+                }
+                self.text_renderer.queue_char(
+                    ch,
+                    current_x,
+                    status_bar_y,
+                    branch_color,
+                    bg_color,
+                    false,
+                    false,
+                    false,
+                    false,
+                )?;
+                current_x += cell_width as f32;
+            }
+        }
+
+        Ok(())
+    }
+
     fn draw_pane_borders(
         &mut self,
         bounds: Rect,
@@ -862,6 +1008,7 @@ impl TerminalApp {
             search_state: SearchState::new(),
             search_input: String::new(),
             ai_palette: AICommandPalette::new(),
+            status_bar: StatusBar::new(),
         }
     }
 
@@ -1041,6 +1188,9 @@ impl TerminalApp {
         // Update AI palette state (check for async responses)
         self.ai_palette.update();
 
+        // Update status bar with focused pane's working directory
+        self.update_status_bar();
+
         if let (Some(ref mut renderer), Some(ref layout)) = (&mut self.renderer, &self.layout) {
             let focused_id = layout.focused_pane_id();
             if let Err(e) = renderer.render_layout(
@@ -1051,10 +1201,39 @@ impl TerminalApp {
                 &self.search_state,
                 &self.search_input,
                 &self.ai_palette,
+                &self.status_bar,
             ) {
                 tracing::error!("Render error: {}", e);
             }
         }
+    }
+
+    /// Update status bar with current directory and git info
+    fn update_status_bar(&mut self) {
+        if let Some(ref layout) = self.layout {
+            let focused_id = layout.focused_pane_id();
+            if let Some(pane) = layout.get_pane(focused_id) {
+                // Try to get the working directory from the PTY's child process
+                let cwd = self.get_pane_cwd(pane);
+                self.status_bar.update(&cwd);
+            }
+        }
+    }
+
+    /// Get the current working directory of a pane's PTY process
+    fn get_pane_cwd(&self, pane: &Pane) -> String {
+        // On Linux, we can read /proc/<pid>/cwd
+        // This requires the child process PID, which we'd need to get from the PTY
+        
+        // For now, fall back to the initial directory
+        // In a full implementation, we'd:
+        // 1. Store the child PID when spawning the PTY
+        // 2. Read /proc/<pid>/cwd
+        // 3. Or use shell integration to track directory changes
+        
+        std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "~".to_string())
     }
 
     /// Convert pixel position to grid coordinates (and pane ID)
