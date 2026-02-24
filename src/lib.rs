@@ -6,5 +6,6 @@
 pub mod ai;
 pub mod config;
 pub mod plugin;
+pub mod search;
 pub mod terminal;
 pub mod ui;

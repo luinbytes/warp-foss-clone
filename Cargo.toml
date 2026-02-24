@@ -51,6 +51,9 @@ anyhow = "1"
 # Clipboard
 arboard = "3.5"
 
+# Search
+regex = "1"
+
 [dev-dependencies]
 tokio-test = "0.4"
 
