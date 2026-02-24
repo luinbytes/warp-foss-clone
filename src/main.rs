@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use config::Config;
 use terminal::grid::TerminalGrid;
 use terminal::parser::TerminalParser;
 use terminal::pty::{PtyConfig, PtySession};
@@ -30,25 +31,10 @@ use winit::{
     window::{Window, WindowId},
 };
 
-/// Configuration for the terminal application
-struct AppConfig {
-    /// Initial terminal columns
-    cols: u16,
-    /// Initial terminal rows  
-    rows: u16,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            cols: 120,
-            rows: 40,
-        }
-    }
-}
-
 /// Main application state
 struct TerminalApp {
+    /// Application configuration
+    config: Config,
     /// The winit window
     window: Option<Arc<Window>>,
     /// GPU renderer - stored as raw parts to avoid lifetime issues
@@ -286,14 +272,19 @@ impl RendererHolder {
 
 impl TerminalApp {
     fn new() -> Self {
-        let config = AppConfig::default();
+        // Load configuration from file (or create default)
+        let config = Config::load().unwrap_or_else(|e| {
+            tracing::warn!("Failed to load config, using defaults: {}", e);
+            Config::default()
+        });
 
         Self {
+            config: config.clone(),
             window: None,
             renderer: None,
             pty: None,
-            parser: TerminalParser::with_size(config.cols as usize, config.rows as usize),
-            grid: TerminalGrid::with_size(config.cols as usize, config.rows as usize),
+            parser: TerminalParser::with_size(config.terminal.cols as usize, config.terminal.rows as usize),
+            grid: TerminalGrid::with_size(config.terminal.cols as usize, config.terminal.rows as usize),
             input_handler: InputHandler::new(),
             selection_state: SelectionState::new(),
             clipboard: Clipboard::new(),
@@ -312,7 +303,9 @@ impl TerminalApp {
         let config = PtyConfig {
             cols,
             rows,
-            ..Default::default()
+            shell: self.config.terminal.shell.clone(),
+            working_dir: self.config.terminal.working_dir.clone(),
+            env: self.config.terminal.env.clone(),
         };
 
         let pty = PtySession::spawn(config)?;
@@ -418,6 +411,60 @@ impl TerminalApp {
                 }
             }
         }
+    }
+
+    /// Adjust font size by delta
+    fn adjust_font_size(&mut self, delta: f32) {
+        if let Some(ref mut holder) = self.renderer {
+            let new_size = (holder.text_renderer.font_size() + delta).clamp(8.0, 72.0);
+            holder.text_renderer.set_font_size(&holder.device, new_size);
+            
+            // Update cell dimensions
+            self.cell_width = (new_size * 0.6) as u32;
+            self.cell_height = new_size as u32;
+
+            tracing::info!("Font size adjusted to {}", new_size);
+        }
+    }
+
+    /// Reset font size to default
+    fn reset_font_size(&mut self) {
+        if let Some(ref mut holder) = self.renderer {
+            let default_size = self.config.font.size;
+            holder.text_renderer.set_font_size(&holder.device, default_size);
+
+            // Update cell dimensions
+            self.cell_width = (default_size * 0.6) as u32;
+            self.cell_height = default_size as u32;
+
+            tracing::info!("Font size reset to {}", default_size);
+        }
+    }
+
+    /// Scroll up in history (towards older content)
+    fn scroll_up(&mut self, lines: usize) {
+        if self.grid.scroll_up_history(lines) {
+            tracing::debug!("Scrolled up {} lines", lines);
+        }
+    }
+
+    /// Scroll down in history (towards newer content)
+    fn scroll_down(&mut self, lines: usize) {
+        if self.grid.scroll_down_history(lines) {
+            tracing::debug!("Scrolled down {} lines", lines);
+        }
+    }
+
+    /// Scroll to the top of scrollback
+    fn scroll_to_top(&mut self) {
+        self.grid.scroll_to_top();
+        tracing::debug!("Scrolled to top");
+    }
+
+    /// Scroll to the bottom (reset scroll offset)
+    fn scroll_to_bottom(&mut self) {
+        self.grid.scroll_to_bottom();
+        tracing::debug!("Scrolled to bottom");
     }
 
     /// Handle window resize
@@ -613,6 +660,64 @@ impl ApplicationHandler for TerminalApp {
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
+                // Handle font size adjustment with Ctrl+Plus/Minus/0
+                if event.state == ElementState::Pressed && self.input_handler.modifiers().ctrl {
+                    let font_changed = match &event.logical_key {
+                        Key::Character(c) if c == "+" || c == "=" => {
+                            self.adjust_font_size(2.0);
+                            true
+                        }
+                        Key::Character(c) if c == "-" || c == "_" => {
+                            self.adjust_font_size(-2.0);
+                            true
+                        }
+                        Key::Character(c) if c == "0" => {
+                            self.reset_font_size();
+                            true
+                        }
+                        _ => false,
+                    };
+
+                    if font_changed {
+                        return;
+                    }
+                }
+
+                // Handle scroll navigation
+                if event.state == ElementState::Pressed {
+                    let scroll_handled = match &event.logical_key {
+                        Key::Named(NamedKey::ArrowUp) if self.input_handler.modifiers().shift => {
+                            self.scroll_up(1);
+                            true
+                        }
+                        Key::Named(NamedKey::ArrowDown) if self.input_handler.modifiers().shift => {
+                            self.scroll_down(1);
+                            true
+                        }
+                        Key::Named(NamedKey::PageUp) => {
+                            self.scroll_up(self.grid.rows());
+                            true
+                        }
+                        Key::Named(NamedKey::PageDown) => {
+                            self.scroll_down(self.grid.rows());
+                            true
+                        }
+                        Key::Named(NamedKey::Home) if self.input_handler.modifiers().shift => {
+                            self.scroll_to_top();
+                            true
+                        }
+                        Key::Named(NamedKey::End) if self.input_handler.modifiers().shift => {
+                            self.scroll_to_bottom();
+                            true
+                        }
+                        _ => false,
+                    };
+
+                    if scroll_handled {
+                        return;
+                    }
+                }
+
                 // Check for paste shortcuts
                 let is_paste = match &event.logical_key {
                     Key::Named(NamedKey::Paste) => true,

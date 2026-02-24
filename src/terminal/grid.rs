@@ -397,7 +397,7 @@ impl TerminalGrid {
                 // This row is from scrollback
                 let scrollback_idx = scrollback_len - scrolled_rows + row;
                 self.scrollback.get(scrollback_idx)
-                    .and_then(|sr| sr.cells.get(col))
+                    .and_then(|row_cells| row_cells.get(col))
             } else {
                 // This row is from the grid
                 let grid_row = row - scrolled_rows;
