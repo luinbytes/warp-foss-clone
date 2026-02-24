@@ -19,6 +19,7 @@ use anyhow::Result;
 use terminal::grid::TerminalGrid;
 use terminal::parser::TerminalParser;
 use terminal::pty::{PtyConfig, PtySession};
+use ui::ai_command_palette::AICommandPalette;
 use ui::input::InputHandler;
 use ui::selection::{extract_selected_text, Clipboard, SelectionState};
 use winit::{
@@ -78,6 +79,8 @@ struct TerminalApp {
     cursor_position: Option<PhysicalPosition<f64>>,
     /// Current modifier state
     modifiers: ModifiersState,
+    /// AI command palette
+    ai_palette: AICommandPalette,
 }
 
 /// Type-erased renderer holder to work around lifetime issues
@@ -304,6 +307,7 @@ impl TerminalApp {
             cell_height: 20,
             cursor_position: None,
             modifiers: ModifiersState::default(),
+            ai_palette: AICommandPalette::new(),
         }
     }
 
@@ -613,6 +617,49 @@ impl ApplicationHandler for TerminalApp {
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
+                // Check for AI palette toggle (Ctrl+Space)
+                if event.state == ElementState::Pressed {
+                    let is_ctrl_space = matches!(&event.logical_key, Key::Character(c) if c == " " || c == " ")
+                        && self.input_handler.modifiers().ctrl;
+                    
+                    if is_ctrl_space {
+                        self.ai_palette.toggle();
+                        return;
+                    }
+                }
+
+                // Handle AI palette input if open
+                if self.ai_palette.is_visible() {
+                    use winit::event::ElementState;
+                    
+                    if event.state == ElementState::Pressed {
+                        match &event.logical_key {
+                            Key::Named(NamedKey::Escape) => {
+                                self.ai_palette.handle_escape();
+                            }
+                            Key::Named(NamedKey::Enter) => {
+                                self.ai_palette.handle_enter();
+                            }
+                            Key::Named(NamedKey::Backspace) => {
+                                self.ai_palette.handle_backspace();
+                            }
+                            Key::Named(NamedKey::ArrowLeft) => {
+                                self.ai_palette.cursor_left();
+                            }
+                            Key::Named(NamedKey::ArrowRight) => {
+                                self.ai_palette.cursor_right();
+                            }
+                            Key::Character(c) => {
+                                for ch in c.chars() {
+                                    self.ai_palette.handle_char(ch);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    return;
+                }
+
                 // Check for paste shortcuts
                 let is_paste = match &event.logical_key {
                     Key::Named(NamedKey::Paste) => true,

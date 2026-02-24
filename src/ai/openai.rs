@@ -87,6 +87,16 @@ impl OpenAIProvider {
             .delete_credential()
             .map_err(|e| AIError::Config(format!("Failed to delete API key: {}", e)))
     }
+
+    /// Get the API key
+    pub fn api_key(&self) -> &str {
+        &self.config.api_key
+    }
+
+    /// Get the model name
+    pub fn model(&self) -> &str {
+        &self.config.model
+    }
 }
 
 #[derive(Serialize)]
