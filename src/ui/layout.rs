@@ -454,6 +454,123 @@ impl LayoutTree {
     pub fn root_mut(&mut self) -> &mut LayoutNode {
         &mut self.root
     }
+
+    /// Close the focused pane
+    ///
+    /// Returns Ok(()) if pane was closed, Err if this is the last pane or pane not found
+    pub fn close_focused(&mut self) -> Result<(), String> {
+        let pane_count = self.pane_count();
+        if pane_count <= 1 {
+            return Err("Cannot close the last pane".to_string());
+        }
+
+        let focused_id = self.focused_pane;
+
+        // Take the old root and replace with placeholder
+        let old_root = std::mem::replace(&mut self.root, LayoutNode::Pane(create_placeholder_pane()));
+
+        match close_pane_in_node(old_root, focused_id) {
+            Ok(new_root) => {
+                self.root = new_root;
+
+                // Update focus to first available pane
+                let pane_ids = self.all_pane_ids();
+                if !pane_ids.is_empty() {
+                    self.focused_pane = pane_ids[0];
+                }
+
+                Ok(())
+            }
+            Err(e) => {
+                // On error, just set focus to first pane
+                let pane_ids = self.all_pane_ids();
+                if !pane_ids.is_empty() {
+                    self.focused_pane = pane_ids[0];
+                }
+                Err(e)
+            }
+        }
+    }
+}
+
+/// Recursively close a pane in a node (standalone function to avoid borrow issues)
+fn close_pane_in_node(node: LayoutNode, pane_id: Uuid) -> Result<LayoutNode, String> {
+    match node {
+        LayoutNode::Pane(pane) if pane.id == pane_id => {
+            // This pane should be removed - caller will handle it
+            Err(format!("Pane {} found", pane_id))
+        }
+        LayoutNode::Pane(pane) => {
+            // Not the target pane
+            Ok(LayoutNode::Pane(pane))
+        }
+        LayoutNode::HorizontalSplit { mut children, mut ratios } => {
+            // Try to remove the pane from children
+            let mut found_idx = None;
+            for (i, child) in children.iter().enumerate() {
+                if child.find_pane(pane_id).is_some() {
+                    found_idx = Some(i);
+                    break;
+                }
+            }
+
+            if let Some(idx) = found_idx {
+                // Remove the child
+                children.remove(idx);
+                ratios.remove(idx);
+
+                // Normalize ratios
+                let total: f32 = ratios.iter().sum();
+                if total > 0.0 {
+                    for ratio in &mut ratios {
+                        *ratio /= total;
+                    }
+                }
+
+                // If only one child left, collapse the split
+                if children.len() == 1 {
+                    return Ok(*children.remove(0));
+                }
+
+                Ok(LayoutNode::HorizontalSplit { children, ratios })
+            } else {
+                Ok(LayoutNode::HorizontalSplit { children, ratios })
+            }
+        }
+        LayoutNode::VerticalSplit { mut children, mut ratios } => {
+            // Try to remove the pane from children
+            let mut found_idx = None;
+            for (i, child) in children.iter().enumerate() {
+                if child.find_pane(pane_id).is_some() {
+                    found_idx = Some(i);
+                    break;
+                }
+            }
+
+            if let Some(idx) = found_idx {
+                // Remove the child
+                children.remove(idx);
+                ratios.remove(idx);
+
+                // Normalize ratios
+                let total: f32 = ratios.iter().sum();
+                if total > 0.0 {
+                    for ratio in &mut ratios {
+                        *ratio /= total;
+                    }
+                }
+
+                // If only one child left, collapse the split
+                if children.len() == 1 {
+                    return Ok(*children.remove(0));
+                }
+
+                Ok(LayoutNode::VerticalSplit { children, ratios })
+            } else {
+                Ok(LayoutNode::VerticalSplit { children, ratios })
+            }
+        }
+    }
 }
 
 /// Create a placeholder pane (used internally for tree manipulation)

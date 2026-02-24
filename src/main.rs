@@ -1028,6 +1028,21 @@ impl TerminalApp {
         self.search_input.clear();
         self.search_state.clear();
     }
+
+    /// Handle pane close (Ctrl+W)
+    fn handle_close_pane(&mut self) {
+        if let Some(ref mut layout) = self.layout {
+            if let Err(e) = layout.close_focused() {
+                tracing::warn!("Failed to close pane: {}", e);
+            } else {
+                // Recalculate layout after closing
+                if let Some(ref window) = self.window {
+                    let size = window.inner_size();
+                    self.handle_resize(size.width, size.height);
+                }
+            }
+        }
+    }
 }
 
 impl ApplicationHandler for TerminalApp {
@@ -1163,6 +1178,14 @@ impl ApplicationHandler for TerminalApp {
                                     self.handle_split(SplitDirection::Horizontal);
                                     return;
                                 }
+                            }
+                        }
+                        Key::Character(c) if c == "w" || c == "W" => {
+                            let modifiers = self.input_handler.modifiers();
+                            if modifiers.ctrl && !modifiers.shift {
+                                // Ctrl+W = Close pane
+                                self.handle_close_pane();
+                                return;
                             }
                         }
                         Key::Named(NamedKey::Tab) => {
