@@ -241,7 +241,7 @@ impl RendererHolder {
 
         for row in 0..rows {
             for col in 0..cols {
-                if let Some(cell) = grid.get_cell(row, col) {
+                if let Some(cell) = grid.get_cell_with_scroll(row, col) {
                     if cell.char != ' ' {
                         let x = col as f32 * cell_width;
                         let y = row as f32 * cell_height;
@@ -432,13 +432,39 @@ impl TerminalApp {
         if let Some(ref mut holder) = self.renderer {
             let default_size = self.config.font.size;
             holder.text_renderer.set_font_size(&holder.device, default_size);
-            
+
             // Update cell dimensions
             self.cell_width = (default_size * 0.6) as u32;
             self.cell_height = default_size as u32;
 
             tracing::info!("Font size reset to {}", default_size);
         }
+    }
+
+    /// Scroll up in history (towards older content)
+    fn scroll_up(&mut self, lines: usize) {
+        if self.grid.scroll_up_history(lines) {
+            tracing::debug!("Scrolled up {} lines", lines);
+        }
+    }
+
+    /// Scroll down in history (towards newer content)
+    fn scroll_down(&mut self, lines: usize) {
+        if self.grid.scroll_down_history(lines) {
+            tracing::debug!("Scrolled down {} lines", lines);
+        }
+    }
+
+    /// Scroll to the top of scrollback
+    fn scroll_to_top(&mut self) {
+        self.grid.scroll_to_top();
+        tracing::debug!("Scrolled to top");
+    }
+
+    /// Scroll to the bottom (reset scroll offset)
+    fn scroll_to_bottom(&mut self) {
+        self.grid.scroll_to_bottom();
+        tracing::debug!("Scrolled to bottom");
     }
 
     /// Handle window resize
@@ -653,6 +679,41 @@ impl ApplicationHandler for TerminalApp {
                     };
 
                     if font_changed {
+                        return;
+                    }
+                }
+
+                // Handle scroll navigation
+                if event.state == ElementState::Pressed {
+                    let scroll_handled = match &event.logical_key {
+                        Key::Named(NamedKey::ArrowUp) if self.input_handler.modifiers().shift => {
+                            self.scroll_up(1);
+                            true
+                        }
+                        Key::Named(NamedKey::ArrowDown) if self.input_handler.modifiers().shift => {
+                            self.scroll_down(1);
+                            true
+                        }
+                        Key::Named(NamedKey::PageUp) => {
+                            self.scroll_up(self.grid.rows());
+                            true
+                        }
+                        Key::Named(NamedKey::PageDown) => {
+                            self.scroll_down(self.grid.rows());
+                            true
+                        }
+                        Key::Named(NamedKey::Home) if self.input_handler.modifiers().shift => {
+                            self.scroll_to_top();
+                            true
+                        }
+                        Key::Named(NamedKey::End) if self.input_handler.modifiers().shift => {
+                            self.scroll_to_bottom();
+                            true
+                        }
+                        _ => false,
+                    };
+
+                    if scroll_handled {
                         return;
                     }
                 }
