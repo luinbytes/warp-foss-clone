@@ -821,6 +821,8 @@ fn get_placeholder_pty() -> Arc<Mutex<PtySession>> {
             cols: 1,
             rows: 1,
             shell: None,  // Use default shell
+            env: vec![],
+            working_dir: None,
         }).expect("Failed to spawn placeholder PTY");
         Arc::new(Mutex::new(pty))
     })
