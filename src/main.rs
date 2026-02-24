@@ -255,7 +255,7 @@ impl RendererHolder {
 
         for row in 0..rows {
             for col in 0..cols {
-                if let Some(cell) = grid.get_cell(row, col) {
+                if let Some(cell) = grid.get_cell_with_scroll(row, col) {
                     if cell.char != ' ' {
                         let x = col as f32 * cell_width;
                         let y = row as f32 * cell_height;

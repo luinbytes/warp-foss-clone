@@ -243,6 +243,8 @@ pub struct TerminalGrid {
     batch_updates: bool,
     /// Pending cell updates during batch mode
     batch_buffer: Vec<(usize, usize, Cell)>,
+    /// Scroll offset for navigating scrollback (0 = bottom/normal view)
+    scroll_offset: usize,
 }
 
 impl TerminalGrid {
@@ -270,6 +272,7 @@ impl TerminalGrid {
             dirty_region: DirtyRegion::full_screen(),
             batch_updates: false,
             batch_buffer: Vec::new(),
+            scroll_offset: 0,
         }
     }
 
@@ -293,6 +296,7 @@ impl TerminalGrid {
             dirty_region: DirtyRegion::full_screen(),
             batch_updates: false,
             batch_buffer: Vec::new(),
+            scroll_offset: 0,
         }
     }
 
@@ -314,6 +318,92 @@ impl TerminalGrid {
     /// Get the number of scrollback lines.
     pub fn scrollback_len(&self) -> usize {
         self.scrollback.len()
+    }
+
+    /// Get the current scroll offset.
+    pub fn scroll_offset(&self) -> usize {
+        self.scroll_offset
+    }
+
+    /// Scroll up in history (towards older content).
+    ///
+    /// Returns true if the scroll position changed.
+    pub fn scroll_up_history(&mut self, lines: usize) -> bool {
+        let max_offset = self.scrollback.len();
+        let new_offset = (self.scroll_offset + lines).min(max_offset);
+        if new_offset != self.scroll_offset {
+            self.scroll_offset = new_offset;
+            self.dirty_region = DirtyRegion::full_screen();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Scroll down in history (towards newer content).
+    ///
+    /// Returns true if the scroll position changed.
+    pub fn scroll_down_history(&mut self, lines: usize) -> bool {
+        let new_offset = self.scroll_offset.saturating_sub(lines);
+        if new_offset != self.scroll_offset {
+            self.scroll_offset = new_offset;
+            self.dirty_region = DirtyRegion::full_screen();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Scroll to the bottom (reset scroll offset).
+    pub fn scroll_to_bottom(&mut self) {
+        if self.scroll_offset > 0 {
+            self.scroll_offset = 0;
+            self.dirty_region = DirtyRegion::full_screen();
+        }
+    }
+
+    /// Scroll to the top of scrollback.
+    pub fn scroll_to_top(&mut self) {
+        let max_offset = self.scrollback.len();
+        if self.scroll_offset != max_offset {
+            self.scroll_offset = max_offset;
+            self.dirty_region = DirtyRegion::full_screen();
+        }
+    }
+
+    /// Check if we're at the bottom (not scrolled).
+    pub fn is_at_bottom(&self) -> bool {
+        self.scroll_offset == 0
+    }
+
+    /// Get a cell from the visible area, considering scroll offset.
+    ///
+    /// When scrolled, this returns cells from the scrollback buffer for
+    /// the upper portion of the screen.
+    pub fn get_cell_with_scroll(&self, row: usize, col: usize) -> Option<&Cell> {
+        if col >= self.cols {
+            return None;
+        }
+
+        if self.scroll_offset == 0 {
+            // Normal view - just get from the grid
+            self.grid.get(row).and_then(|r| r.get(col))
+        } else {
+            // Scrolled view - mix scrollback and grid
+            let scrollback_len = self.scrollback.len();
+            let scrolled_rows = self.scroll_offset.min(scrollback_len);
+
+            if row < scrolled_rows {
+                // This row is from scrollback
+                let scrollback_idx = scrollback_len - scrolled_rows + row;
+                self.scrollback.get(scrollback_idx)
+                    .and_then(|sr| sr.cells.get(col))
+            } else {
+                // This row is from the grid
+                let grid_row = row - scrolled_rows;
+                self.grid.get(grid_row).and_then(|r| r.get(col))
+            }
+        }
     }
 
     /// Set the current text attributes.
@@ -563,6 +653,9 @@ impl TerminalGrid {
         for _ in 0..scroll_amount {
             self.grid.push(vec![Cell::default(); self.cols]);
         }
+
+        // Reset scroll offset when new content arrives
+        self.scroll_offset = 0;
 
         // Mark entire screen as dirty after scroll
         self.mark_full_dirty();
