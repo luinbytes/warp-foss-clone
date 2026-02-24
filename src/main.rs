@@ -420,6 +420,34 @@ impl TerminalApp {
         }
     }
 
+    /// Adjust font size by delta
+    fn adjust_font_size(&mut self, delta: f32) {
+        if let Some(ref mut holder) = self.renderer {
+            let new_size = (holder.text_renderer.font_size() + delta).clamp(8.0, 72.0);
+            holder.text_renderer.set_font_size(&holder.device, new_size);
+            
+            // Update cell dimensions
+            self.cell_width = (new_size * 0.6) as u32;
+            self.cell_height = new_size as u32;
+
+            tracing::info!("Font size adjusted to {}", new_size);
+        }
+    }
+
+    /// Reset font size to default
+    fn reset_font_size(&mut self) {
+        if let Some(ref mut holder) = self.renderer {
+            let default_size = self.config.font.size;
+            holder.text_renderer.set_font_size(&holder.device, default_size);
+            
+            // Update cell dimensions
+            self.cell_width = (default_size * 0.6) as u32;
+            self.cell_height = default_size as u32;
+
+            tracing::info!("Font size reset to {}", default_size);
+        }
+    }
+
     /// Handle window resize
     fn handle_resize(&mut self, width: u32, height: u32) {
         // Resize the renderer
@@ -613,6 +641,29 @@ impl ApplicationHandler for TerminalApp {
             }
 
             WindowEvent::KeyboardInput { event, .. } => {
+                // Handle font size adjustment with Ctrl+Plus/Minus/0
+                if event.state == ElementState::Pressed && self.modifiers.ctrl() {
+                    let font_changed = match &event.logical_key {
+                        Key::Character(c) if c == "+" || c == "=" => {
+                            self.adjust_font_size(2.0);
+                            true
+                        }
+                        Key::Character(c) if c == "-" || c == "_" => {
+                            self.adjust_font_size(-2.0);
+                            true
+                        }
+                        Key::Character(c) if c == "0" => {
+                            self.reset_font_size();
+                            true
+                        }
+                        _ => false,
+                    };
+
+                    if font_changed {
+                        return;
+                    }
+                }
+
                 // Check for paste shortcuts
                 let is_paste = match &event.logical_key {
                     Key::Named(NamedKey::Paste) => true,

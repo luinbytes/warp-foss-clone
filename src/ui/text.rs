@@ -851,6 +851,12 @@ impl TextRenderer {
         self.atlas.font_size()
     }
 
+    /// Set the font size (requires recreating the glyph atlas).
+    pub fn set_font_size(&mut self, device: &wgpu::Device, font_size: f32) {
+        // Recreate atlas with new font size
+        self.atlas = GlyphAtlas::new(device, font_size).expect("Failed to recreate glyph atlas");
+    }
+
     /// Get the number of queued vertices.
     pub fn vertex_count(&self) -> usize {
         self.vertices.len()
