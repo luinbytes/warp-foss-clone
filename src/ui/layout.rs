@@ -251,89 +251,27 @@ impl LayoutTree {
 
         let focused_id = self.focused_pane;
         let new_pane_id = new_pane.id;
-
-        // Recursively rebuild the tree with the split, avoiding placeholder extraction
-        // This prevents spawning PTYs just for tree manipulation
-        match self.split_node_recursive(std::mem::take(&mut self.root), focused_id, direction, new_pane) {
-            Ok(new_root) => {
-                self.root = new_root;
-                self.focused_pane = new_pane_id;
-                Ok(())
-            }
-            Err((old_root, err)) => {
-                self.root = old_root;
-                Err(err)
-            }
-        }
-    }
-
-    /// Recursively split a node without using placeholders
-    fn split_node_recursive(
-        &self,
-        node: LayoutNode,
-        target_id: Uuid,
-        direction: SplitDirection,
-        new_pane: Pane,
-    ) -> Result<LayoutNode, (LayoutNode, String)> {
-        match node {
-            LayoutNode::Pane(pane) if pane.id == target_id => {
-                // Found the pane to split - create the split directly
-                Ok(match direction {
-                    SplitDirection::Horizontal => LayoutNode::HorizontalSplit {
-                        children: vec![
-                            Box::new(LayoutNode::Pane(pane)),
-                            Box::new(LayoutNode::Pane(new_pane)),
-                        ],
-                        ratios: vec![0.5, 0.5],
-                    },
-                    SplitDirection::Vertical => LayoutNode::VerticalSplit {
-                        children: vec![
-                            Box::new(LayoutNode::Pane(pane)),
-                            Box::new(LayoutNode::Pane(new_pane)),
-                        ],
-                        ratios: vec![0.5, 0.5],
-                    },
-                })
-            }
-            LayoutNode::Pane(pane) => Ok(LayoutNode::Pane(pane)),
-            LayoutNode::HorizontalSplit { mut children, ratios } => {
-                // Recurse into children to find the target
-                for i in 0..children.len() {
-                    if children[i].find_pane(target_id).is_some() {
-                        let child = Box::new(std::mem::replace(&mut children[i], LayoutNode::Pane(create_placeholder_pane())));
-                        match self.split_node_recursive(*child, target_id, direction, new_pane) {
-                            Ok(new_child) => {
-                                children[i] = Box::new(new_child);
-                                return Ok(LayoutNode::HorizontalSplit { children, ratios });
-                            }
-                            Err((old_child, err)) => {
-                                children[i] = Box::new(old_child);
-                                return Err((LayoutNode::HorizontalSplit { children, ratios }, err));
-                            }
-                        }
-                    }
+        
+        // Replace the focused pane with a split containing the old and new panes
+        if let Some(_pane) = self.root.find_pane(focused_id) {
+            // Extract the old pane by replacing root with a placeholder
+            // This is a workaround for not being able to clone PtySession
+            let old_root = std::mem::replace(&mut self.root, LayoutNode::Pane(create_placeholder_pane()));
+            
+            // Try to split the old root
+            match self.try_split_node(old_root, focused_id, direction, new_pane) {
+                Ok(new_root) => {
+                    self.root = new_root;
+                    self.focused_pane = new_pane_id;
+                    Ok(())
                 }
-                Ok(LayoutNode::HorizontalSplit { children, ratios })
-            }
-            LayoutNode::VerticalSplit { mut children, ratios } => {
-                // Recurse into children to find the target
-                for i in 0..children.len() {
-                    if children[i].find_pane(target_id).is_some() {
-                        let child = Box::new(std::mem::replace(&mut children[i], LayoutNode::Pane(create_placeholder_pane())));
-                        match self.split_node_recursive(*child, target_id, direction, new_pane) {
-                            Ok(new_child) => {
-                                children[i] = Box::new(new_child);
-                                return Ok(LayoutNode::VerticalSplit { children, ratios });
-                            }
-                            Err((old_child, err)) => {
-                                children[i] = Box::new(old_child);
-                                return Err((LayoutNode::VerticalSplit { children, ratios }, err));
-                            }
-                        }
-                    }
+                Err((old_root, err)) => {
+                    self.root = old_root;
+                    Err(err)
                 }
-                Ok(LayoutNode::VerticalSplit { children, ratios })
             }
+        } else {
+            Err("Focused pane not found".to_string())
         }
     }
 
@@ -805,42 +743,13 @@ fn resize_pane_in_node(
     }
 }
 
-use std::sync::{Arc, Mutex, OnceLock};
-use uuid::Uuid;
-
-/// Cached placeholder PTY to avoid spawning multiple times on Windows
-/// This is created once and reused for all placeholder operations
-static PLACEHOLDER_PTY: OnceLock<Arc<Mutex<PtySession>>> = OnceLock::new();
-
-/// Get or create the cached placeholder PTY
-fn get_placeholder_pty() -> Arc<Mutex<PtySession>> {
-    PLACEHOLDER_PTY.get_or_init(|| {
-        use crate::terminal::pty::PtyConfig;
-        // Spawn once with minimal size
-        let pty = PtySession::spawn(PtyConfig {
-            cols: 1,
-            rows: 1,
-            shell: None,  // Use default shell
-            env: vec![],
-            working_dir: None,
-        }).expect("Failed to spawn placeholder PTY");
-        Arc::new(Mutex::new(pty))
-    })
-}
-
 /// Create a placeholder pane (used internally for tree manipulation)
-///
-/// Uses a cached PTY to avoid spawning multiple sessions on Windows,
-/// which prevents stack overflow from repeated PTY creation.
 fn create_placeholder_pane() -> Pane {
-    Pane {
-        id: Uuid::new_v4(),
-        title: "Placeholder".to_string(),
-        pty: get_placeholder_pty(),  // Reuse cached PTY
-        grid: TerminalGrid::with_size(1, 1),
-        parser: TerminalParser::new(),
-        bounds: Rect::new(0, 0, 1, 1),
-    }
+    // This creates a minimal pane for temporary use during tree restructuring
+    // It should never be rendered or used by the user
+    use crate::terminal::pty::PtyConfig;
+    let pty = PtySession::spawn(PtyConfig::default()).unwrap();
+    Pane::new(pty, 1, 1, Rect::new(0, 0, 1, 1))
 }
 
 #[cfg(test)]
@@ -854,19 +763,9 @@ mod tests {
     }
 
     // Helper function for placeholder panes (used in split logic)
-    // Uses same no-PTY approach to avoid test failures on Windows
     fn create_placeholder_pane() -> Pane {
-        use std::sync::{Arc, Mutex};
-        use uuid::Uuid;
-
-        Pane {
-            id: Uuid::new_v4(),
-            title: "Placeholder".to_string(),
-            pty: Arc::new(Mutex::new(None)),
-            grid: TerminalGrid::with_size(1, 1),
-            parser: TerminalParser::new(),
-            bounds: Rect::new(0, 0, 1, 1),
-        }
+        let pty = PtySession::spawn(PtyConfig::default()).unwrap();
+        Pane::new(pty, 1, 1, Rect::new(0, 0, 1, 1))
     }
 
     #[test]
