@@ -46,7 +46,7 @@ A free and open-source clone of [Warp](https://warp.dev/) terminal with AI integ
 
 ## Known Issues
 
-### Windows Binary Crash (Stack Overflow)
+### Windows Binary Crash (Stack Overflow) - Lumi couldn't fix this
 
 **Status:** Unresolved - affecting cross-compiled Windows builds only
 
