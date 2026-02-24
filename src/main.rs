@@ -1866,3 +1866,10 @@ fn main() -> Result<()> {
 
     Ok(())
 }
+
+// Windows-specific: Increase stack size to 8MB to prevent overflow
+// This is needed because winit's EventLoop::new() uses significant stack
+// on Windows due to deep Windows API call chains (RegisterClassExW, etc.)
+#[cfg(all(target_os = "windows", target_env = "gnu"))]
+#[link_section = ".stack"]
+static STACK_SIZE: u32 = 8 * 1024 * 1024;
