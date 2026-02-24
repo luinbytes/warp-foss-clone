@@ -297,13 +297,17 @@ impl RendererHolder {
         let rows = grid.rows();
         let cols = grid.cols();
 
+        // Offset terminal content by 1 cell to leave room for borders
+        let content_offset_x = bounds.x as f32 + cell_width as f32;
+        let content_offset_y = bounds.y as f32 + cell_height as f32;
+
         for row in 0..rows {
             for col in 0..cols {
                 if let Some(cell) = grid.get_cell(row, col) {
                     if cell.char != ' ' {
-                        // Offset by pane bounds
-                        let x = bounds.x as f32 + (col as f32 * cell_width as f32);
-                        let y = bounds.y as f32 + (row as f32 * cell_height as f32);
+                        // Offset by pane bounds + border offset
+                        let x = content_offset_x + (col as f32 * cell_width as f32);
+                        let y = content_offset_y + (row as f32 * cell_height as f32);
 
                         self.text_renderer.queue_char(
                             cell.char,
@@ -321,9 +325,126 @@ impl RendererHolder {
             }
         }
 
-        // Draw pane borders (using characters for now, will improve later)
-        // For focused panes, we could use a different color or style
-        let _ = is_focused; // Use this later for visual feedback
+        // Draw pane borders
+        self.draw_pane_borders(bounds, cell_width, cell_height, is_focused)?;
+
+        Ok(())
+    }
+
+    fn draw_pane_borders(
+        &mut self,
+        bounds: Rect,
+        cell_width: u32,
+        cell_height: u32,
+        is_focused: bool,
+    ) -> Result<(), ui::renderer::RendererError> {
+        use terminal::parser::Color;
+
+        // Border color: bright cyan for focused, dark gray for unfocused
+        let border_color = if is_focused {
+            Color::Rgb(76, 230, 230) // Bright cyan
+        } else {
+            Color::Rgb(76, 76, 76) // Dark gray
+        };
+
+        let bg_color = Color::Rgb(2, 2, 2); // Very dark background
+
+        let x = bounds.x as f32;
+        let y = bounds.y as f32;
+        let width = bounds.width as usize;
+        let height = bounds.height as usize;
+
+        // Calculate grid dimensions for borders
+        let border_cols = width / cell_width as usize;
+        let border_rows = height / cell_height as usize;
+
+        // Draw top border
+        for col in 0..border_cols {
+            let char_x = x + (col as f32 * cell_width as f32);
+            let char_y = y;
+
+            let border_char = if col == 0 {
+                '┌' // Top-left corner
+            } else if col == border_cols - 1 {
+                '┐' // Top-right corner
+            } else {
+                '─' // Horizontal line
+            };
+
+            self.text_renderer.queue_char(
+                border_char,
+                char_x,
+                char_y,
+                border_color,
+                bg_color,
+                true,  // bold
+                false, // italic
+                false, // underline
+                false, // blink
+            )?;
+        }
+
+        // Draw bottom border
+        for col in 0..border_cols {
+            let char_x = x + (col as f32 * cell_width as f32);
+            let char_y = y + ((border_rows - 1) as f32 * cell_height as f32);
+
+            let border_char = if col == 0 {
+                '└' // Bottom-left corner
+            } else if col == border_cols - 1 {
+                '┘' // Bottom-right corner
+            } else {
+                '─' // Horizontal line
+            };
+
+            self.text_renderer.queue_char(
+                border_char,
+                char_x,
+                char_y,
+                border_color,
+                bg_color,
+                true,
+                false,
+                false,
+                false,
+            )?;
+        }
+
+        // Draw left border
+        for row in 1..border_rows - 1 {
+            let char_x = x;
+            let char_y = y + (row as f32 * cell_height as f32);
+
+            self.text_renderer.queue_char(
+                '│', // Vertical line
+                char_x,
+                char_y,
+                border_color,
+                bg_color,
+                true,
+                false,
+                false,
+                false,
+            )?;
+        }
+
+        // Draw right border
+        for row in 1..border_rows - 1 {
+            let char_x = x + ((border_cols - 1) as f32 * cell_width as f32);
+            let char_y = y + (row as f32 * cell_height as f32);
+
+            self.text_renderer.queue_char(
+                '│', // Vertical line
+                char_x,
+                char_y,
+                border_color,
+                bg_color,
+                true,
+                false,
+                false,
+                false,
+            )?;
+        }
 
         Ok(())
     }
