@@ -21,6 +21,7 @@ use anyhow::Result;
 use terminal::grid::TerminalGrid;
 use terminal::parser::TerminalParser;
 use terminal::pty::{PtyConfig, PtySession};
+use ui::ai_command_palette::AICommandPalette;
 use ui::input::InputHandler;
 use search::SearchState;
 use ui::layout::{LayoutTree, Pane, Rect, SplitDirection};
@@ -82,6 +83,8 @@ struct TerminalApp {
     search_state: SearchState,
     /// Search mode input buffer
     search_input: String,
+    /// AI command palette
+    ai_palette: AICommandPalette,
 }
 
 /// Type-erased renderer holder to work around lifetime issues
@@ -604,6 +607,7 @@ impl TerminalApp {
             modifiers: ModifiersState::default(),
             search_state: SearchState::new(),
             search_input: String::new(),
+            ai_palette: AICommandPalette::new(),
         }
     }
 
@@ -1120,8 +1124,51 @@ impl ApplicationHandler for TerminalApp {
             WindowEvent::KeyboardInput { event, .. } => {
                 // Check for special shortcuts
                 if event.state == ElementState::Pressed {
-                    // Handle search mode input first
-                    if self.search_state.active {
+                    // Check for AI palette toggle (Ctrl+Space)
+                    let is_ctrl_space = matches!(&event.logical_key, Key::Character(c) if c == " " || c == " ")
+                        && self.input_handler.modifiers().ctrl;
+                    
+                    if is_ctrl_space {
+                        self.ai_palette.toggle();
+                        return;
+                    }
+                }
+
+                // Handle AI palette input if open
+                if self.ai_palette.is_visible() {
+                    use winit::event::ElementState;
+                    
+                    if event.state == ElementState::Pressed {
+                        match &event.logical_key {
+                            Key::Named(NamedKey::Escape) => {
+                                self.ai_palette.handle_escape();
+                            }
+                            Key::Named(NamedKey::Enter) => {
+                                self.ai_palette.handle_enter();
+                            }
+                            Key::Named(NamedKey::Backspace) => {
+                                self.ai_palette.handle_backspace();
+                            }
+                            Key::Named(NamedKey::ArrowLeft) => {
+                                self.ai_palette.cursor_left();
+                            }
+                            Key::Named(NamedKey::ArrowRight) => {
+                                self.ai_palette.cursor_right();
+                            }
+                            Key::Character(c) => {
+                                for ch in c.chars() {
+                                    self.ai_palette.handle_char(ch);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    return;
+                }
+
+                // Handle search mode input if search is active
+                if self.search_state.active {
+                    if event.state == ElementState::Pressed {
                         match &event.logical_key {
                             Key::Named(NamedKey::Escape) => {
                                 self.handle_search_close();
@@ -1151,7 +1198,10 @@ impl ApplicationHandler for TerminalApp {
                             }
                         }
                     }
+                }
 
+                // Check for other shortcuts
+                if event.state == ElementState::Pressed {
                     // Check for search toggle (Ctrl+Shift+F)
                     match &event.logical_key {
                         Key::Character(c) if c == "f" || c == "F" => {
