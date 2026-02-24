@@ -51,6 +51,7 @@ anyhow = "1"
 
 # Clipboard
 arboard = "3.5"
+uuid = { version = "1.21.0", features = ["v4"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
