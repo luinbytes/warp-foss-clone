@@ -1344,6 +1344,28 @@ impl TerminalApp {
         Ok(())
     }
 
+    /// Handle copy to clipboard (Ctrl+Shift+C)
+    fn handle_copy(&mut self) {
+        // Check if there's a selection
+        if self.selection_state.has_selection() {
+            if let Some(ref layout) = self.layout {
+                if let Some(pane) = layout.focused_pane() {
+                    let selected_text = extract_selected_text(
+                        pane.grid.as_rows(),
+                        &self.selection_state.region,
+                    );
+                    if !selected_text.is_empty() {
+                        if let Err(e) = self.clipboard.copy(&selected_text) {
+                            tracing::warn!("Failed to copy to clipboard: {}", e);
+                        } else {
+                            tracing::debug!("Copied selection to clipboard (Ctrl+Shift+C)");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Handle pane split request
     fn handle_split(&mut self, direction: SplitDirection) {
         // Get focused pane info first to avoid borrow conflicts
@@ -1690,6 +1712,14 @@ impl ApplicationHandler for TerminalApp {
                                 return;
                             }
                         }
+                        // Copy with Ctrl+Shift+C
+                        Key::Character(c) if c == "c" || c == "C" => {
+                            let modifiers = self.input_handler.modifiers();
+                            if modifiers.ctrl && modifiers.shift {
+                                self.handle_copy();
+                                return;
+                            }
+                        }
                         Key::Named(NamedKey::Tab) => {
                             let modifiers = self.input_handler.modifiers();
                             if modifiers.shift {
@@ -1733,11 +1763,13 @@ impl ApplicationHandler for TerminalApp {
                         _ => {}
                     }
 
-                    // Check for paste shortcuts
+                    // Check for paste shortcuts (Ctrl+V or Ctrl+Shift+V)
                     let is_paste = match &event.logical_key {
                         Key::Named(NamedKey::Paste) => true,
                         Key::Character(c) if c == "v" || c == "V" => {
-                            self.input_handler.modifiers().ctrl
+                            let modifiers = self.input_handler.modifiers();
+                            // Support both Ctrl+V and Ctrl+Shift+V
+                            modifiers.ctrl
                         }
                         Key::Character(c) if c == "i" || c == "I" => {
                             self.input_handler.modifiers().shift
