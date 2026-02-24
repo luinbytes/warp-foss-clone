@@ -10,6 +10,7 @@
 mod ai;
 mod config;
 mod plugin;
+mod search;
 mod terminal;
 mod ui;
 
@@ -21,6 +22,7 @@ use terminal::grid::TerminalGrid;
 use terminal::parser::TerminalParser;
 use terminal::pty::{PtyConfig, PtySession};
 use ui::input::InputHandler;
+use search::SearchState;
 use ui::layout::{LayoutTree, Pane, Rect, SplitDirection};
 use ui::selection::{extract_selected_text, Clipboard, SelectionState};
 use winit::{
@@ -76,6 +78,10 @@ struct TerminalApp {
     cursor_position: Option<PhysicalPosition<f64>>,
     /// Current modifier state
     modifiers: ModifiersState,
+    /// Search state
+    search_state: SearchState,
+    /// Search mode input buffer
+    search_input: String,
 }
 
 /// Type-erased renderer holder to work around lifetime issues
@@ -241,12 +247,14 @@ impl RendererHolder {
         cell_width: u32,
         cell_height: u32,
         focused_pane_id: uuid::Uuid,
+        search_state: &SearchState,
+        search_input: &str,
     ) -> Result<(), ui::renderer::RendererError> {
         // Clear previous frame's text
         self.text_renderer.clear();
 
         // Render all panes in the layout
-        self.render_node(layout.root(), cell_width, cell_height, focused_pane_id)?;
+        self.render_node(layout.root(), cell_width, cell_height, focused_pane_id, search_state, search_input)?;
 
         // Prepare text renderer (upload glyph atlas and vertex data)
         self.text_renderer.prepare(&self.device, &self.queue);
@@ -261,21 +269,23 @@ impl RendererHolder {
         cell_width: u32,
         cell_height: u32,
         focused_pane_id: uuid::Uuid,
+        search_state: &SearchState,
+        search_input: &str,
     ) -> Result<(), ui::renderer::RendererError> {
         use ui::layout::LayoutNode;
 
         match node {
             LayoutNode::Pane(pane) => {
-                self.render_pane(pane, cell_width, cell_height, pane.id == focused_pane_id)?;
+                self.render_pane(pane, cell_width, cell_height, pane.id == focused_pane_id, search_state, search_input)?;
             }
             LayoutNode::HorizontalSplit { children, .. } => {
                 for child in children {
-                    self.render_node(child, cell_width, cell_height, focused_pane_id)?;
+                    self.render_node(child, cell_width, cell_height, focused_pane_id, search_state, search_input)?;
                 }
             }
             LayoutNode::VerticalSplit { children, .. } => {
                 for child in children {
-                    self.render_node(child, cell_width, cell_height, focused_pane_id)?;
+                    self.render_node(child, cell_width, cell_height, focused_pane_id, search_state, search_input)?;
                 }
             }
         }
@@ -289,7 +299,11 @@ impl RendererHolder {
         cell_width: u32,
         cell_height: u32,
         is_focused: bool,
+        search_state: &SearchState,
+        search_input: &str,
     ) -> Result<(), ui::renderer::RendererError> {
+        use terminal::parser::Color;
+
         let bounds = pane.bounds;
         let grid = &pane.grid;
 
@@ -301,6 +315,11 @@ impl RendererHolder {
         let content_offset_x = bounds.x as f32 + cell_width as f32;
         let content_offset_y = bounds.y as f32 + cell_height as f32;
 
+        // Render search bar if search is active on focused pane
+        if is_focused && search_state.active {
+            self.render_search_bar(bounds, cell_width, cell_height, search_state, search_input)?;
+        }
+
         for row in 0..rows {
             for col in 0..cols {
                 if let Some(cell) = grid.get_cell(row, col) {
@@ -309,12 +328,27 @@ impl RendererHolder {
                         let x = content_offset_x + (col as f32 * cell_width as f32);
                         let y = content_offset_y + (row as f32 * cell_height as f32);
 
+                        // Highlight search matches
+                        let (fg_color, bg_color) = if is_focused && search_state.active {
+                            if search_state.is_current_match(row, col) {
+                                // Current match: bright yellow background
+                                (Color::Rgb(0, 0, 0), Color::Rgb(255, 255, 0))
+                            } else if search_state.is_match(row, col) {
+                                // Other matches: orange background
+                                (Color::Rgb(0, 0, 0), Color::Rgb(255, 165, 0))
+                            } else {
+                                (cell.fg_color, cell.bg_color)
+                            }
+                        } else {
+                            (cell.fg_color, cell.bg_color)
+                        };
+
                         self.text_renderer.queue_char(
                             cell.char,
                             x,
                             y,
-                            cell.fg_color,
-                            cell.bg_color,
+                            fg_color,
+                            bg_color,
                             cell.attributes.bold,
                             cell.attributes.italic,
                             cell.attributes.underline,
@@ -327,6 +361,106 @@ impl RendererHolder {
 
         // Draw pane borders
         self.draw_pane_borders(bounds, cell_width, cell_height, is_focused)?;
+
+        Ok(())
+    }
+
+    fn render_search_bar(
+        &mut self,
+        bounds: Rect,
+        cell_width: u32,
+        cell_height: u32,
+        search_state: &SearchState,
+        search_input: &str,
+    ) -> Result<(), ui::renderer::RendererError> {
+        use terminal::parser::Color;
+
+        let x = bounds.x as f32 + cell_width as f32;
+        let y = bounds.y as f32 + cell_height as f32;
+        let bar_width = (bounds.width / cell_width) as usize - 2; // -2 for borders
+
+        // Draw search bar background
+        let search_bg = Color::Rgb(40, 40, 40);
+        let search_fg = Color::Rgb(255, 255, 255);
+        let search_hint = Color::Rgb(150, 150, 150);
+
+        // Draw "Search:" label
+        let label = "Search: ";
+        for (i, ch) in label.chars().enumerate() {
+            self.text_renderer.queue_char(
+                ch,
+                x + (i as f32 * cell_width as f32),
+                y,
+                search_hint,
+                search_bg,
+                false,
+                false,
+                false,
+                false,
+            )?;
+        }
+
+        // Draw search input
+        let input_start = label.len();
+        for (i, ch) in search_input.chars().enumerate() {
+            if i + input_start >= bar_width {
+                break;
+            }
+            self.text_renderer.queue_char(
+                ch,
+                x + ((input_start + i) as f32 * cell_width as f32),
+                y,
+                search_fg,
+                search_bg,
+                false,
+                false,
+                false,
+                false,
+            )?;
+        }
+
+        // Draw cursor
+        let cursor_pos = input_start + search_input.len();
+        if cursor_pos < bar_width {
+            self.text_renderer.queue_char(
+                '▏',
+                x + (cursor_pos as f32 * cell_width as f32),
+                y,
+                search_fg,
+                search_bg,
+                false,
+                false,
+                false,
+                false,
+            )?;
+        }
+
+        // Draw match count
+        if search_state.match_count() > 0 {
+            let match_text = format!(
+                " {} / {} ",
+                search_state.current_match_number().unwrap_or(0),
+                search_state.match_count()
+            );
+            let match_start = bar_width.saturating_sub(match_text.len());
+
+            for (i, ch) in match_text.chars().enumerate() {
+                if match_start + i >= bar_width {
+                    break;
+                }
+                self.text_renderer.queue_char(
+                    ch,
+                    x + ((match_start + i) as f32 * cell_width as f32),
+                    y,
+                    search_hint,
+                    search_bg,
+                    false,
+                    false,
+                    false,
+                    false,
+                )?;
+            }
+        }
 
         Ok(())
     }
@@ -468,6 +602,8 @@ impl TerminalApp {
             cell_height: 20,
             cursor_position: None,
             modifiers: ModifiersState::default(),
+            search_state: SearchState::new(),
+            search_input: String::new(),
         }
     }
 
@@ -646,7 +782,14 @@ impl TerminalApp {
     fn render(&mut self) {
         if let (Some(ref mut renderer), Some(ref layout)) = (&mut self.renderer, &self.layout) {
             let focused_id = layout.focused_pane_id();
-            if let Err(e) = renderer.render_layout(layout, self.cell_width, self.cell_height, focused_id) {
+            if let Err(e) = renderer.render_layout(
+                layout,
+                self.cell_width,
+                self.cell_height,
+                focused_id,
+                &self.search_state,
+                &self.search_input,
+            ) {
                 tracing::error!("Render error: {}", e);
             }
         }
@@ -811,6 +954,80 @@ impl TerminalApp {
             layout.focus_prev();
         }
     }
+
+    /// Toggle search mode
+    fn handle_toggle_search(&mut self) {
+        self.search_state.active = !self.search_state.active;
+        if self.search_state.active {
+            self.search_input.clear();
+            self.search_state.clear();
+        }
+    }
+
+    /// Handle search input
+    fn handle_search_input(&mut self, c: char) {
+        if self.search_state.active {
+            self.search_input.push(c);
+            self.update_search();
+        }
+    }
+
+    /// Handle search backspace
+    fn handle_search_backspace(&mut self) {
+        if self.search_state.active && !self.search_input.is_empty() {
+            self.search_input.pop();
+            self.update_search();
+        }
+    }
+
+    /// Update search with current input
+    fn update_search(&mut self) {
+        if self.search_state.set_pattern(&self.search_input).is_ok() {
+            // Find matches in focused pane
+            if let Some(ref layout) = self.layout {
+                if let Some(pane) = layout.focused_pane() {
+                    // Collect all rows from the grid
+                    let rows: Vec<(usize, String)> = (0..pane.grid.rows())
+                        .map(|row| {
+                            let mut line = String::new();
+                            for col in 0..pane.grid.cols() {
+                                if let Some(cell) = pane.grid.get_cell(row, col) {
+                                    line.push(cell.char);
+                                } else {
+                                    line.push(' ');
+                                }
+                            }
+                            (row, line)
+                        })
+                        .collect();
+
+                    // Update search state with matches
+                    self.search_state.find_matches(rows.iter().map(|(r, l)| (*r, l.as_str())));
+                }
+            }
+        }
+    }
+
+    /// Handle search navigation (next match)
+    fn handle_search_next(&mut self) {
+        if self.search_state.active {
+            self.search_state.next_match();
+        }
+    }
+
+    /// Handle search navigation (previous match)
+    fn handle_search_prev(&mut self) {
+        if self.search_state.active {
+            self.search_state.prev_match();
+        }
+    }
+
+    /// Close search
+    fn handle_search_close(&mut self) {
+        self.search_state.active = false;
+        self.search_input.clear();
+        self.search_state.clear();
+    }
 }
 
 impl ApplicationHandler for TerminalApp {
@@ -888,6 +1105,50 @@ impl ApplicationHandler for TerminalApp {
             WindowEvent::KeyboardInput { event, .. } => {
                 // Check for special shortcuts
                 if event.state == ElementState::Pressed {
+                    // Handle search mode input first
+                    if self.search_state.active {
+                        match &event.logical_key {
+                            Key::Named(NamedKey::Escape) => {
+                                self.handle_search_close();
+                                return;
+                            }
+                            Key::Named(NamedKey::Enter) => {
+                                if self.input_handler.modifiers().shift {
+                                    self.handle_search_prev();
+                                } else {
+                                    self.handle_search_next();
+                                }
+                                return;
+                            }
+                            Key::Named(NamedKey::Backspace) => {
+                                self.handle_search_backspace();
+                                return;
+                            }
+                            Key::Character(c) => {
+                                for ch in c.chars() {
+                                    self.handle_search_input(ch);
+                                }
+                                return;
+                            }
+                            _ => {
+                                // Ignore other keys in search mode
+                                return;
+                            }
+                        }
+                    }
+
+                    // Check for search toggle (Ctrl+Shift+F)
+                    match &event.logical_key {
+                        Key::Character(c) if c == "f" || c == "F" => {
+                            let modifiers = self.input_handler.modifiers();
+                            if modifiers.ctrl && modifiers.shift {
+                                self.handle_toggle_search();
+                                return;
+                            }
+                        }
+                        _ => {}
+                    }
+
                     // Check for pane splitting (Ctrl+D for horizontal, Ctrl+Shift+D for vertical)
                     match &event.logical_key {
                         Key::Character(c) if c == "d" || c == "D" => {
