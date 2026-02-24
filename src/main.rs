@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use config::Config;
 use terminal::grid::TerminalGrid;
 use terminal::parser::TerminalParser;
 use terminal::pty::{PtyConfig, PtySession};
@@ -30,25 +31,10 @@ use winit::{
     window::{Window, WindowId},
 };
 
-/// Configuration for the terminal application
-struct AppConfig {
-    /// Initial terminal columns
-    cols: u16,
-    /// Initial terminal rows  
-    rows: u16,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            cols: 120,
-            rows: 40,
-        }
-    }
-}
-
 /// Main application state
 struct TerminalApp {
+    /// Application configuration
+    config: Config,
     /// The winit window
     window: Option<Arc<Window>>,
     /// GPU renderer - stored as raw parts to avoid lifetime issues
@@ -286,14 +272,19 @@ impl RendererHolder {
 
 impl TerminalApp {
     fn new() -> Self {
-        let config = AppConfig::default();
+        // Load configuration from file (or create default)
+        let config = Config::load().unwrap_or_else(|e| {
+            tracing::warn!("Failed to load config, using defaults: {}", e);
+            Config::default()
+        });
 
         Self {
+            config: config.clone(),
             window: None,
             renderer: None,
             pty: None,
-            parser: TerminalParser::with_size(config.cols as usize, config.rows as usize),
-            grid: TerminalGrid::with_size(config.cols as usize, config.rows as usize),
+            parser: TerminalParser::with_size(config.terminal.cols as usize, config.terminal.rows as usize),
+            grid: TerminalGrid::with_size(config.terminal.cols as usize, config.terminal.rows as usize),
             input_handler: InputHandler::new(),
             selection_state: SelectionState::new(),
             clipboard: Clipboard::new(),
@@ -312,7 +303,9 @@ impl TerminalApp {
         let config = PtyConfig {
             cols,
             rows,
-            ..Default::default()
+            shell: self.config.terminal.shell.clone(),
+            working_dir: self.config.terminal.working_dir.clone(),
+            env: self.config.terminal.env.clone(),
         };
 
         let pty = PtySession::spawn(config)?;
@@ -642,7 +635,7 @@ impl ApplicationHandler for TerminalApp {
 
             WindowEvent::KeyboardInput { event, .. } => {
                 // Handle font size adjustment with Ctrl+Plus/Minus/0
-                if event.state == ElementState::Pressed && self.modifiers.ctrl() {
+                if event.state == ElementState::Pressed && self.input_handler.modifiers().ctrl {
                     let font_changed = match &event.logical_key {
                         Key::Character(c) if c == "+" || c == "=" => {
                             self.adjust_font_size(2.0);
