@@ -491,6 +491,32 @@ impl LayoutTree {
             }
         }
     }
+
+    /// Resize the focused pane
+    ///
+    /// # Arguments
+    /// * `direction` - Direction to resize (Horizontal for left/right, Vertical for up/down)
+    /// * `delta` - Amount to resize (positive to grow, negative to shrink)
+    ///
+    /// # Returns
+    /// Ok(()) if resize was successful, Err if resize not possible
+    pub fn resize_focused(&mut self, direction: SplitDirection, delta: f32) -> Result<(), String> {
+        let focused_id = self.focused_pane;
+
+        // Take the old root and replace with placeholder
+        let old_root = std::mem::replace(&mut self.root, LayoutNode::Pane(create_placeholder_pane()));
+
+        match resize_pane_in_node(old_root, focused_id, direction, delta) {
+            Ok(new_root) => {
+                self.root = new_root;
+                Ok(())
+            }
+            Err((old_root, err)) => {
+                self.root = old_root;
+                Err(err)
+            }
+        }
+    }
 }
 
 /// Recursively close a pane in a node (standalone function to avoid borrow issues)
@@ -569,6 +595,150 @@ fn close_pane_in_node(node: LayoutNode, pane_id: Uuid) -> Result<LayoutNode, Str
             } else {
                 Ok(LayoutNode::VerticalSplit { children, ratios })
             }
+        }
+    }
+}
+
+/// Recursively resize a pane in a node (standalone function to avoid borrow issues)
+fn resize_pane_in_node(
+    node: LayoutNode,
+    pane_id: Uuid,
+    direction: SplitDirection,
+    delta: f32,
+) -> Result<LayoutNode, (LayoutNode, String)> {
+    match node {
+        LayoutNode::Pane(pane) => {
+            // Single pane cannot be resized
+            Err((LayoutNode::Pane(pane), "Cannot resize: no adjacent pane".to_string()))
+        }
+        LayoutNode::HorizontalSplit { mut children, mut ratios } => {
+            // Only resize if direction matches
+            if direction == SplitDirection::Horizontal {
+                // Find which child contains the pane
+                for i in 0..children.len() {
+                    if children[i].find_pane(pane_id).is_some() {
+                        // Found the pane, adjust ratios
+                        // If pane is in child i, we adjust ratios[i] and ratios[i+1] or ratios[i-1]
+                        // For simplicity, we adjust the pane's ratio up/down
+                        
+                        if i < ratios.len() {
+                            let new_ratio = (ratios[i] + delta).clamp(0.1, 0.9);
+                            let diff = new_ratio - ratios[i];
+                            ratios[i] = new_ratio;
+                            
+                            // Adjust adjacent pane(s) to maintain total of 1.0
+                            if i + 1 < ratios.len() {
+                                ratios[i + 1] -= diff;
+                                ratios[i + 1] = ratios[i + 1].clamp(0.1, 0.9);
+                            } else if i > 0 {
+                                ratios[i - 1] -= diff;
+                                ratios[i - 1] = ratios[i - 1].clamp(0.1, 0.9);
+                            }
+                            
+                            // Normalize to ensure total is 1.0
+                            let total: f32 = ratios.iter().sum();
+                            if total > 0.0 {
+                                for ratio in &mut ratios {
+                                    *ratio /= total;
+                                }
+                            }
+                        }
+                        
+                        // Recurse into children to find the actual pane
+                        let mut new_children = Vec::with_capacity(children.len());
+                        for child in children.into_iter() {
+                            let new_child = resize_pane_in_node(*child, pane_id, direction, delta);
+                            match new_child {
+                                Ok(c) => new_children.push(Box::new(c)),
+                                Err((c, _)) => new_children.push(Box::new(c)),
+                            }
+                        }
+                        
+                        return Ok(LayoutNode::HorizontalSplit {
+                            children: new_children,
+                            ratios,
+                        });
+                    }
+                }
+            }
+            
+            // Direction doesn't match or pane not found, just recurse
+            let mut new_children = Vec::with_capacity(children.len());
+            for child in children.into_iter() {
+                let new_child = resize_pane_in_node(*child, pane_id, direction, delta);
+                match new_child {
+                    Ok(c) => new_children.push(Box::new(c)),
+                    Err((c, _)) => new_children.push(Box::new(c)),
+                }
+            }
+            
+            Ok(LayoutNode::HorizontalSplit {
+                children: new_children,
+                ratios,
+            })
+        }
+        LayoutNode::VerticalSplit { mut children, mut ratios } => {
+            // Only resize if direction matches
+            if direction == SplitDirection::Vertical {
+                // Find which child contains the pane
+                for i in 0..children.len() {
+                    if children[i].find_pane(pane_id).is_some() {
+                        // Found the pane, adjust ratios
+                        if i < ratios.len() {
+                            let new_ratio = (ratios[i] + delta).clamp(0.1, 0.9);
+                            let diff = new_ratio - ratios[i];
+                            ratios[i] = new_ratio;
+                            
+                            // Adjust adjacent pane(s)
+                            if i + 1 < ratios.len() {
+                                ratios[i + 1] -= diff;
+                                ratios[i + 1] = ratios[i + 1].clamp(0.1, 0.9);
+                            } else if i > 0 {
+                                ratios[i - 1] -= diff;
+                                ratios[i - 1] = ratios[i - 1].clamp(0.1, 0.9);
+                            }
+                            
+                            // Normalize
+                            let total: f32 = ratios.iter().sum();
+                            if total > 0.0 {
+                                for ratio in &mut ratios {
+                                    *ratio /= total;
+                                }
+                            }
+                        }
+                        
+                        // Recurse into children
+                        let mut new_children = Vec::with_capacity(children.len());
+                        for child in children.into_iter() {
+                            let new_child = resize_pane_in_node(*child, pane_id, direction, delta);
+                            match new_child {
+                                Ok(c) => new_children.push(Box::new(c)),
+                                Err((c, _)) => new_children.push(Box::new(c)),
+                            }
+                        }
+                        
+                        return Ok(LayoutNode::VerticalSplit {
+                            children: new_children,
+                            ratios,
+                        });
+                    }
+                }
+            }
+            
+            // Direction doesn't match or pane not found, just recurse
+            let mut new_children = Vec::with_capacity(children.len());
+            for child in children.into_iter() {
+                let new_child = resize_pane_in_node(*child, pane_id, direction, delta);
+                match new_child {
+                    Ok(c) => new_children.push(Box::new(c)),
+                    Err((c, _)) => new_children.push(Box::new(c)),
+                }
+            }
+            
+            Ok(LayoutNode::VerticalSplit {
+                children: new_children,
+                ratios,
+            })
         }
     }
 }

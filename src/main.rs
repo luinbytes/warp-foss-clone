@@ -1484,6 +1484,21 @@ impl TerminalApp {
             }
         }
     }
+
+    /// Handle pane resize (Ctrl+Shift+Arrow keys)
+    fn handle_resize_pane(&mut self, direction: SplitDirection, delta: f32) {
+        if let Some(ref mut layout) = self.layout {
+            if let Err(e) = layout.resize_focused(direction, delta) {
+                tracing::warn!("Failed to resize pane: {}", e);
+            } else {
+                // Recalculate layout after resizing
+                if let Some(ref window) = self.window {
+                    let size = window.inner_size();
+                    self.handle_resize(size.width, size.height);
+                }
+            }
+        }
+    }
 }
 
 impl ApplicationHandler for TerminalApp {
@@ -1685,6 +1700,35 @@ impl ApplicationHandler for TerminalApp {
                                 self.handle_focus_next();
                             }
                             return;
+                        }
+                        // Pane resizing with Ctrl+Shift+Arrow keys
+                        Key::Named(NamedKey::ArrowLeft) => {
+                            let modifiers = self.input_handler.modifiers();
+                            if modifiers.ctrl && modifiers.shift {
+                                self.handle_resize_pane(SplitDirection::Horizontal, -0.05);
+                                return;
+                            }
+                        }
+                        Key::Named(NamedKey::ArrowRight) => {
+                            let modifiers = self.input_handler.modifiers();
+                            if modifiers.ctrl && modifiers.shift {
+                                self.handle_resize_pane(SplitDirection::Horizontal, 0.05);
+                                return;
+                            }
+                        }
+                        Key::Named(NamedKey::ArrowUp) => {
+                            let modifiers = self.input_handler.modifiers();
+                            if modifiers.ctrl && modifiers.shift {
+                                self.handle_resize_pane(SplitDirection::Vertical, -0.05);
+                                return;
+                            }
+                        }
+                        Key::Named(NamedKey::ArrowDown) => {
+                            let modifiers = self.input_handler.modifiers();
+                            if modifiers.ctrl && modifiers.shift {
+                                self.handle_resize_pane(SplitDirection::Vertical, 0.05);
+                                return;
+                            }
                         }
                         _ => {}
                     }
