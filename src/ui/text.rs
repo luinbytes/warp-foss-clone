@@ -346,6 +346,16 @@ impl GlyphAtlas {
         }
         Ok(())
     }
+    
+    /// Get the number of cached glyphs
+    pub fn cached_glyph_count(&self) -> usize {
+        self.glyph_cache.len()
+    }
+    
+    /// Get the texture size
+    pub fn texture_size(&self) -> u32 {
+        ATLAS_SIZE
+    }
 }
 
 /// Vertex data for text rendering.
@@ -799,6 +809,14 @@ impl TextRenderer {
     pub fn prepare(&mut self, device: &Device, queue: &Queue) {
         // Upload atlas if needed
         self.atlas.upload(queue);
+
+        // Debug: log atlas info once
+        static LOGGED_ATLAS: std::sync::Once = std::sync::Once::new();
+        LOGGED_ATLAS.call_once(|| {
+            tracing::info!("Glyph atlas: {} cached glyphs, texture_size={}", 
+                self.atlas.cached_glyph_count(), 
+                self.atlas.texture_size());
+        });
 
         // Upload vertex data
         if !self.vertices.is_empty() {

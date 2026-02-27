@@ -245,9 +245,19 @@ impl RendererHolder {
 
             // Render text if we have bind group and vertices
             if let Some(ref bind_group) = self.text_bind_group {
-                if self.text_renderer.vertex_count() > 0 {
+                let vc = self.text_renderer.vertex_count();
+                if vc > 0 {
+                    static LOGGED_RENDER: std::sync::Once = std::sync::Once::new();
+                    LOGGED_RENDER.call_once(|| {
+                        tracing::info!("RENDERING TEXT: vertex_count={}, about to call text_renderer.render()", vc);
+                    });
                     self.text_renderer.render(&mut render_pass, bind_group);
                 }
+            } else {
+                static LOGGED_NO_BG: std::sync::Once = std::sync::Once::new();
+                LOGGED_NO_BG.call_once(|| {
+                    tracing::error!("NO TEXT BIND GROUP - text cannot render!");
+                });
             }
         }
 
@@ -288,7 +298,12 @@ impl RendererHolder {
 
         // Prepare text renderer (upload glyph atlas and vertex data)
         self.text_renderer.prepare(&self.device, &self.queue);
-        tracing::debug!("render_layout: text_renderer.vertex_count() after prepare = {}", self.text_renderer.vertex_count());
+        
+        // Debug: log once
+        static LOGGED_PREPARE: std::sync::Once = std::sync::Once::new();
+        LOGGED_PREPARE.call_once(|| {
+            tracing::info!("render_layout: text_renderer.vertex_count() after prepare = {}", self.text_renderer.vertex_count());
+        });
 
         // Render to screen
         self.render()
@@ -342,21 +357,24 @@ impl RendererHolder {
         let rows = grid.rows();
         let cols = grid.cols();
         
-        // Debug: log grid info and sample cells
-        tracing::debug!("render_pane: grid {}x{}, first few cells:", cols, rows);
-        for row in 0..rows.min(3) {
-            let mut chars = String::new();
-            for col in 0..cols.min(15) {
-                if let Some(cell) = grid.get_cell(row, col) {
-                    if cell.char != ' ' {
-                        chars.push(cell.char);
-                    } else {
-                        chars.push('.');
+        // Debug: log grid info ONCE (use static to prevent spam)
+        static LOGGED_GRID: std::sync::Once = std::sync::Once::new();
+        LOGGED_GRID.call_once(|| {
+            tracing::info!("render_pane: grid {}x{}, first few cells:", cols, rows);
+            for row in 0..rows.min(3) {
+                let mut chars = String::new();
+                for col in 0..cols.min(15) {
+                    if let Some(cell) = grid.get_cell(row, col) {
+                        if cell.char != ' ' {
+                            chars.push(cell.char);
+                        } else {
+                            chars.push('.');
+                        }
                     }
                 }
+                tracing::info!("  row {}: {}", row, chars);
             }
-            tracing::debug!("  row {}: {}", row, chars);
-        }
+        });
 
         // Offset terminal content by 1 cell to leave room for borders
         let content_offset_x = bounds.x as f32 + cell_width as f32;
@@ -376,6 +394,15 @@ impl RendererHolder {
                         // Offset by pane bounds + border offset
                         let x = content_offset_x + (col as f32 * cell_width as f32);
                         let y = content_offset_y + (row as f32 * cell_height as f32);
+                        
+                        // Debug: log first character position once
+                        if row == 0 && col == 0 && cell.char == 'H' {
+                            static LOGGED_FIRST_CHAR: std::sync::Once = std::sync::Once::new();
+                            LOGGED_FIRST_CHAR.call_once(|| {
+                                tracing::info!("First char 'H' position: x={}, y={}, bounds={:?}, cell_size={}x{}", 
+                                    x, y, bounds, cell_width, cell_height);
+                            });
+                        }
 
                         // Highlight search matches
                         let (fg_color, bg_color) = if is_focused && search_state.active {
@@ -409,7 +436,11 @@ impl RendererHolder {
             }
         }
         
-        tracing::debug!("render_pane: queued {} characters, text vertex_count={}", chars_queued, self.text_renderer.vertex_count());
+        // Debug: log once
+        static LOGGED_CHARS: std::sync::Once = std::sync::Once::new();
+        LOGGED_CHARS.call_once(|| {
+            tracing::info!("render_pane: queued {} characters, text vertex_count={}", chars_queued, self.text_renderer.vertex_count());
+        });
 
         // Draw pane borders
         self.draw_pane_borders(bounds, cell_width, cell_height, is_focused)?;
@@ -1071,6 +1102,14 @@ impl TerminalApp {
         pane.grid.put_char_at(0, 9, 'l');
         pane.grid.put_char_at(0, 10, 'd');
         pane.grid.put_char_at(0, 11, '!');
+        
+        // Verify the text was stored
+        tracing::info!("Test text added to grid, verifying:");
+        for col in 0..12 {
+            if let Some(cell) = pane.grid.get_cell(0, col) {
+                tracing::info!("  grid[0][{}] = '{}' (fg: {:?}, bg: {:?})", col, cell.char, cell.fg_color, cell.bg_color);
+            }
+        }
         
         Ok(pane)
     }
