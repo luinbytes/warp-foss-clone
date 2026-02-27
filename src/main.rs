@@ -1035,7 +1035,22 @@ impl TerminalApp {
         let pty = PtySession::spawn(config)?;
         let bounds = Rect::new(0, 0, cols as u32 * self.cell_width, rows as u32 * self.cell_height);
         
-        Ok(Pane::new(pty, cols as usize, rows as usize, bounds))
+        let mut pane = Pane::new(pty, cols as usize, rows as usize, bounds);
+        
+        // Add test text to verify rendering works
+        pane.grid.put_char_at(0, 0, 'H');
+        pane.grid.put_char_at(0, 1, 'e');
+        pane.grid.put_char_at(0, 2, 'l');
+        pane.grid.put_char_at(0, 3, 'l');
+        pane.grid.put_char_at(0, 4, 'o');
+        pane.grid.put_char_at(0, 6, 'W');
+        pane.grid.put_char_at(0, 7, 'o');
+        pane.grid.put_char_at(0, 8, 'r');
+        pane.grid.put_char_at(0, 9, 'l');
+        pane.grid.put_char_at(0, 10, 'd');
+        pane.grid.put_char_at(0, 11, '!');
+        
+        Ok(pane)
     }
 
     /// Create a new pane with PTY
