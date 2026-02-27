@@ -1070,74 +1070,65 @@ impl TerminalApp {
         // Use async reader on Windows, sync reader on Unix
         #[cfg(target_os = "windows")]
         {
-            let data = pane.pty.read_async();
+            let data = {
+                if let Ok(session) = pane.pty.lock() {
+                    session.read_async()
+                } else {
+                    Vec::new()
+                }
+            };
             if !data.is_empty() {
                 tracing::trace!("read_pane_output: received {} bytes via async", data.len());
-                // Process the output through the parser
-                for byte in &data {
-                    pane.parser.parse(*byte, &mut pane.grid);
-                }
+                pane.parser.parse_bytes_with_output(&data, &mut pane.grid);
             }
             return;
         }
         
         #[cfg(not(target_os = "windows"))]
         {
-            // Batch read from PTY - accumulate multiple reads before processing
             let mut data = Vec::with_capacity(16384);
-
-        // Try to read multiple times to batch available data
-        let mut has_data = false;
-        for _ in 0..5 {
-            // Attempt to read more data (limit to 5 attempts to avoid blocking)
-            let read_result = {
-                if let Ok(mut session) = pane.pty.lock() {
-                    let mut buf = vec![0u8; 4096];
-                    match session.read(&mut buf) {
-                        Ok(0) => {
-                            // EOF - PTY closed
-                            tracing::info!("PTY closed for pane {}", pane.id);
-                            return;
-                        }
-                        Ok(n) => {
-                            buf.truncate(n);
-                            (true, Some(buf))
-                        }
-                        Err(e) => {
-                            // Would block is expected when no data available
-                            let err_str = e.to_string();
-                            if !err_str.contains("Would block")
-                                && !err_str.contains("Resource temporarily unavailable")
-                            {
-                                tracing::debug!("PTY read error: {}", e);
+            let mut has_data = false;
+            
+            for _ in 0..5 {
+                let read_result = {
+                    if let Ok(mut session) = pane.pty.lock() {
+                        let mut buf = vec![0u8; 4096];
+                        match session.read(&mut buf) {
+                            Ok(0) => {
+                                tracing::info!("PTY closed for pane {}", pane.id);
+                                return;
                             }
-                            // No more data available
-                            break;
+                            Ok(n) => {
+                                buf.truncate(n);
+                                (true, Some(buf))
+                            }
+                            Err(e) => {
+                                let err_str = e.to_string();
+                                if !err_str.contains("Would block")
+                                    && !err_str.contains("Resource temporarily unavailable")
+                                {
+                                    tracing::debug!("PTY read error: {}", e);
+                                }
+                                break;
+                            }
                         }
+                    } else {
+                        (false, None)
                     }
-                } else {
-                    (false, None)
-                }
-            };
+                };
 
-            match read_result {
-                (_, Some(buf)) if !buf.is_empty() => {
-                    data.extend_from_slice(&buf);
-                    has_data = true;
-                }
-                (_, None) => {
-                    break; // No more data or error
-                }
-                _ => {
-                    break;
+                match read_result {
+                    (_, Some(buf)) if !buf.is_empty() => {
+                        data.extend_from_slice(&buf);
+                        has_data = true;
+                    }
+                    _ => break,
                 }
             }
-        }
 
-        // Process the data if we accumulated any
-        if has_data && !data.is_empty() {
-            Self::process_pane_output(pane, &data);
-        }
+            if has_data && !data.is_empty() {
+                Self::process_pane_output(pane, &data);
+            }
         }
     }
 
