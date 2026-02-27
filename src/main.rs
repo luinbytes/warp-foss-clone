@@ -199,6 +199,8 @@ impl RendererHolder {
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
+            // Update text renderer screen size for correct NDC calculations
+            self.text_renderer.resize(width, height);
         }
     }
 
@@ -933,7 +935,15 @@ impl TerminalApp {
         let pty = PtySession::spawn(config)?;
         let bounds = Rect::new(0, 0, cols as u32 * self.cell_width, rows as u32 * self.cell_height);
         
-        Ok(Pane::new(pty, cols as usize, rows as usize, bounds))
+        let mut pane = Pane::new(pty, cols as usize, rows as usize, bounds);
+        
+        // Add test text to verify rendering
+        let test_str = "Hello World! This is a test.";
+        for (i, ch) in test_str.chars().enumerate() {
+            pane.grid.put_char_at(0, i, ch);
+        }
+        
+        Ok(pane)
     }
 
     /// Create a new pane with PTY
