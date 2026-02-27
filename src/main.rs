@@ -243,13 +243,20 @@ impl RendererHolder {
                 occlusion_query_set: None,
             });
 
+            // Debug: log render state
+            let vc = self.text_renderer.vertex_count();
+            let has_bg = self.text_bind_group.is_some();
+            static LOGGED_RENDER_STATE: std::sync::Once = std::sync::Once::new();
+            LOGGED_RENDER_STATE.call_once(|| {
+                tracing::info!("RENDER STATE: vertex_count={}, has_bind_group={}", vc, has_bg);
+            });
+
             // Render text if we have bind group and vertices
             if let Some(ref bind_group) = self.text_bind_group {
-                let vc = self.text_renderer.vertex_count();
                 if vc > 0 {
                     static LOGGED_RENDER: std::sync::Once = std::sync::Once::new();
                     LOGGED_RENDER.call_once(|| {
-                        tracing::info!("RENDERING TEXT: vertex_count={}, about to call text_renderer.render()", vc);
+                        tracing::info!("RENDERING TEXT: calling text_renderer.render() with {} vertices", vc);
                     });
                     self.text_renderer.render(&mut render_pass, bind_group);
                 }
