@@ -1050,16 +1050,8 @@ impl TerminalApp {
         Ok(Pane::new(pty, cols, rows, bounds))
     }
 
-    /// Read and process PTY output from all panes (non-blocking with batching)
+    /// Read and process PTY output from all panes (non-blocking)
     fn read_all_pty_output(&mut self) {
-        // FIXME: PTY reads may block on Windows - for now skip to test rendering
-        // The "Would block" error handling exists but portable_pty doesn't set non-blocking
-        #[cfg(target_os = "windows")]
-        {
-            tracing::trace!("read_all_pty_output: skipping on Windows (blocking PTY issue)");
-            return;
-        }
-
         if let Some(ref mut layout) = self.layout {
             // Get all pane IDs
             let pane_ids = layout.all_pane_ids();
@@ -1075,8 +1067,24 @@ impl TerminalApp {
 
     /// Read and process PTY output from a single pane
     fn read_pane_output(pane: &mut Pane) {
-        // Batch read from PTY - accumulate multiple reads before processing
-        let mut data = Vec::with_capacity(16384); // Start with 16KB capacity
+        // Use async reader on Windows, sync reader on Unix
+        #[cfg(target_os = "windows")]
+        {
+            let data = pane.pty.read_async();
+            if !data.is_empty() {
+                tracing::trace!("read_pane_output: received {} bytes via async", data.len());
+                // Process the output through the parser
+                for byte in &data {
+                    pane.parser.parse(*byte, &mut pane.grid);
+                }
+            }
+            return;
+        }
+        
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Batch read from PTY - accumulate multiple reads before processing
+            let mut data = Vec::with_capacity(16384);
 
         // Try to read multiple times to batch available data
         let mut has_data = false;
@@ -1129,6 +1137,7 @@ impl TerminalApp {
         // Process the data if we accumulated any
         if has_data && !data.is_empty() {
             Self::process_pane_output(pane, &data);
+        }
         }
     }
 

@@ -180,6 +180,31 @@ impl PtyReader {
     }
 }
 
+/// Async reader that uses a background thread to read PTY output
+/// This is necessary on Windows where PTY reads block
+pub struct PtyAsyncReader {
+    /// Channel receiver for PTY data
+    rx: Receiver<Vec<u8>>,
+    /// Handle to the reader thread (for cleanup)
+    _thread: JoinHandle<()>,
+}
+
+impl PtyAsyncReader {
+    /// Try to receive data without blocking
+    pub fn try_recv(&self) -> Result<Vec<u8>, TryRecvError> {
+        self.rx.try_recv()
+    }
+    
+    /// Check if data is available
+    pub fn has_data(&self) -> bool {
+        match self.rx.try_recv() {
+            Ok(_) => true,
+            Err(TryRecvError::Empty) => false,
+            Err(TryRecvError::Disconnected) => false,
+        }
+    }
+}
+
 /// A PTY session that manages the pseudo-terminal lifecycle
 pub struct PtySession {
     /// The PTY pair (primary + replica)
@@ -188,6 +213,8 @@ pub struct PtySession {
     writer: PtyWriter,
     /// Reader for receiving output from the shell (thread-safe)
     reader: Arc<Mutex<PtyReader>>,
+    /// Async reader for non-blocking reads (used on Windows)
+    async_reader: Option<PtyAsyncReader>,
     /// The spawned child process handle
     child: Box<dyn portable_pty::Child + Send + Sync>,
     /// Current terminal size
@@ -276,11 +303,58 @@ impl PtySession {
                 .try_clone_reader()
                 .map_err(|e| PtyError::CreationFailed(e.to_string()))?,
         );
+        
+        let reader = Arc::new(Mutex::new(reader));
+        
+        // On Windows, spawn a background reader thread
+        // This is necessary because portable_pty doesn't support non-blocking reads on Windows
+        let async_reader = {
+            let (tx, rx) = mpsc::channel();
+            let reader_clone = Arc::clone(&reader);
+            
+            let thread = thread::spawn(move || {
+                loop {
+                    let mut buf = vec![0u8; 4096];
+                    let read_result = {
+                        match reader_clone.lock() {
+                            Ok(mut r) => r.read(&mut buf),
+                            Err(_) => break, // Lock poisoned, exit thread
+                        }
+                    };
+                    
+                    match read_result {
+                        Ok(0) => {
+                            // EOF - PTY closed
+                            tracing::debug!("PTY reader thread: EOF");
+                            break;
+                        }
+                        Ok(n) => {
+                            buf.truncate(n);
+                            if tx.send(buf).is_err() {
+                                tracing::debug!("PTY reader thread: channel closed");
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::trace!("PTY reader thread error: {}", e);
+                            // Sleep a bit before retrying
+                            thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                    }
+                }
+            });
+            
+            Some(PtyAsyncReader {
+                rx,
+                _thread: thread,
+            })
+        };
 
         Ok(Self {
             pair,
             writer,
-            reader: Arc::new(Mutex::new(reader)),
+            reader,
+            async_reader,
             size,
             child,
         })
@@ -318,6 +392,29 @@ impl PtySession {
             .lock()
             .map_err(|_| PtyError::ReadError("Reader lock poisoned".to_string()))?;
         reader.read(buf)
+    }
+    
+    /// Read data asynchronously using background thread (Windows-compatible)
+    /// Returns available data from the channel, or empty vec if none available
+    pub fn read_async(&self) -> Vec<u8> {
+        if let Some(ref async_reader) = self.async_reader {
+            let mut all_data = Vec::new();
+            // Drain all available data from channel
+            loop {
+                match async_reader.try_recv() {
+                    Ok(data) => all_data.extend(data),
+                    Err(_) => break,
+                }
+            }
+            all_data
+        } else {
+            Vec::new()
+        }
+    }
+    
+    /// Check if async reader has data available
+    pub fn has_async_data(&self) -> bool {
+        self.async_reader.as_ref().map_or(false, |r| r.has_data())
     }
 
     /// Resize the PTY to new dimensions
