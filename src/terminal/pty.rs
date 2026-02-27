@@ -6,6 +6,8 @@
 
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread::{self, JoinHandle};
 
 use portable_pty::{native_pty_system, CommandBuilder, PtyPair, PtySize};
 use thiserror::Error;

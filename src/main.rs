@@ -104,9 +104,14 @@ impl RendererHolder {
     async fn new(window: Arc<Window>) -> Result<Self, ui::renderer::RendererError> {
         use ui::renderer::RendererError;
 
-        // Create instance
+        // Create instance - prefer DX12 on Windows for better cross-compile compatibility
+        #[cfg(target_os = "windows")]
+        let backends = wgpu::Backends::DX12;
+        #[cfg(not(target_os = "windows"))]
+        let backends = wgpu::Backends::all();
+
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends,
             ..Default::default()
         });
 
@@ -197,10 +202,15 @@ impl RendererHolder {
     fn render(&mut self) -> Result<(), ui::renderer::RendererError> {
         use ui::renderer::RendererError;
 
+        tracing::debug!("RendererHolder::render() - getting texture");
+
         let output = self
             .surface
             .get_current_texture()
-            .map_err(|e| RendererError::TextureAcquisition(e.to_string()))?;
+            .map_err(|e| {
+                tracing::error!("Failed to get current texture: {}", e);
+                RendererError::TextureAcquisition(e.to_string())
+            })?;
 
         let view = output
             .texture
@@ -220,9 +230,9 @@ impl RendererHolder {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.01,
-                            g: 0.01,
-                            b: 0.01,
+                            r: 0.02,  // Dark background
+                            g: 0.02,
+                            b: 0.02,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -242,7 +252,9 @@ impl RendererHolder {
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
+        tracing::debug!("RendererHolder::render() - submitted commands, presenting");
         output.present();
+        tracing::debug!("RendererHolder::render() - presented successfully");
 
         Ok(())
     }
@@ -1040,6 +1052,14 @@ impl TerminalApp {
 
     /// Read and process PTY output from all panes (non-blocking with batching)
     fn read_all_pty_output(&mut self) {
+        // FIXME: PTY reads may block on Windows - for now skip to test rendering
+        // The "Would block" error handling exists but portable_pty doesn't set non-blocking
+        #[cfg(target_os = "windows")]
+        {
+            tracing::trace!("read_all_pty_output: skipping on Windows (blocking PTY issue)");
+            return;
+        }
+
         if let Some(ref mut layout) = self.layout {
             // Get all pane IDs
             let pane_ids = layout.all_pane_ids();
@@ -1185,6 +1205,8 @@ impl TerminalApp {
 
     /// Render a frame
     fn render(&mut self) {
+        tracing::debug!("render() called");
+
         // Update AI palette state (check for async responses)
         self.ai_palette.update();
 
@@ -1193,6 +1215,7 @@ impl TerminalApp {
 
         if let (Some(ref mut renderer), Some(ref layout)) = (&mut self.renderer, &self.layout) {
             let focused_id = layout.focused_pane_id();
+            tracing::debug!("calling render_layout, focused_id={}", focused_id);
             if let Err(e) = renderer.render_layout(
                 layout,
                 self.cell_width,
@@ -1804,6 +1827,7 @@ impl ApplicationHandler for TerminalApp {
             }
 
             WindowEvent::RedrawRequested => {
+                tracing::debug!("RedrawRequested received");
                 // Read and process any pending PTY output from all panes
                 self.read_all_pty_output();
 
@@ -1821,8 +1845,12 @@ impl ApplicationHandler for TerminalApp {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        tracing::debug!("about_to_wait() START, running={}", self.running);
+
         // Process PTY output periodically
+        tracing::debug!("about_to_wait: calling read_all_pty_output");
         self.read_all_pty_output();
+        tracing::debug!("about_to_wait: read_all_pty_output done");
 
         // Limit frame rate
         let elapsed = self.last_frame.elapsed();
@@ -1835,12 +1863,15 @@ impl ApplicationHandler for TerminalApp {
         // Request redraw if running
         if self.running {
             if let Some(ref window) = self.window {
+                tracing::debug!("about_to_wait: requesting redraw");
                 window.request_redraw();
+                tracing::debug!("about_to_wait: redraw requested");
             }
         }
 
-        // Set control flow
-        event_loop.set_control_flow(ControlFlow::Wait);
+        tracing::debug!("about_to_wait() END, setting Poll");
+        // Use Poll instead of Wait for continuous rendering on Windows
+        event_loop.set_control_flow(ControlFlow::Poll);
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
@@ -1850,7 +1881,9 @@ impl ApplicationHandler for TerminalApp {
 
 fn main() -> Result<()> {
     // Initialize logging
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::DEBUG)
+        .init();
 
     tracing::info!("Warp FOSS v0.1.0");
     tracing::info!("Starting terminal application with split pane support...");
