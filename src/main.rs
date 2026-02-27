@@ -288,6 +288,7 @@ impl RendererHolder {
 
         // Prepare text renderer (upload glyph atlas and vertex data)
         self.text_renderer.prepare(&self.device, &self.queue);
+        tracing::debug!("render_layout: text_renderer.vertex_count() after prepare = {}", self.text_renderer.vertex_count());
 
         // Render to screen
         self.render()
@@ -340,6 +341,22 @@ impl RendererHolder {
         // Render terminal content
         let rows = grid.rows();
         let cols = grid.cols();
+        
+        // Debug: log grid info and sample cells
+        tracing::debug!("render_pane: grid {}x{}, first few cells:", cols, rows);
+        for row in 0..rows.min(3) {
+            let mut chars = String::new();
+            for col in 0..cols.min(15) {
+                if let Some(cell) = grid.get_cell(row, col) {
+                    if cell.char != ' ' {
+                        chars.push(cell.char);
+                    } else {
+                        chars.push('.');
+                    }
+                }
+            }
+            tracing::debug!("  row {}: {}", row, chars);
+        }
 
         // Offset terminal content by 1 cell to leave room for borders
         let content_offset_x = bounds.x as f32 + cell_width as f32;
@@ -349,6 +366,8 @@ impl RendererHolder {
         if is_focused && search_state.active {
             self.render_search_bar(bounds, cell_width, cell_height, search_state, search_input)?;
         }
+        
+        let mut chars_queued = 0usize;
 
         for row in 0..rows {
             for col in 0..cols {
@@ -384,10 +403,13 @@ impl RendererHolder {
                             cell.attributes.underline,
                             cell.attributes.blink,
                         )?;
+                        chars_queued += 1;
                     }
                 }
             }
         }
+        
+        tracing::debug!("render_pane: queued {} characters, text vertex_count={}", chars_queued, self.text_renderer.vertex_count());
 
         // Draw pane borders
         self.draw_pane_borders(bounds, cell_width, cell_height, is_focused)?;
