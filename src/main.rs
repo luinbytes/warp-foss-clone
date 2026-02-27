@@ -176,7 +176,10 @@ impl RendererHolder {
 
         // Create text renderer
         let window_size = (size.width, size.height);
-        let text_renderer = ui::text::TextRenderer::new(&device, 16.0, window_size)?;
+        let mut text_renderer = ui::text::TextRenderer::new(&device, 16.0, window_size)?;
+        
+        // Initialize the render pipeline (creates bind_group_layout)
+        text_renderer.init_pipeline(&device, surface_format);
 
         // Create bind group for text
         let text_bind_group = text_renderer.create_bind_group(&device);
