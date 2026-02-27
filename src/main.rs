@@ -233,9 +233,9 @@ impl RendererHolder {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.02,  // Dark background
-                            g: 0.02,
-                            b: 0.02,
+                            r: 0.0,  // Pure black background
+                            g: 0.0,
+                            b: 0.0,
                             a: 1.0,
                         }),
                         store: wgpu::StoreOp::Store,
@@ -246,28 +246,11 @@ impl RendererHolder {
                 occlusion_query_set: None,
             });
 
-            // Debug: log render state
-            let vc = self.text_renderer.vertex_count();
-            let has_bg = self.text_bind_group.is_some();
-            static LOGGED_RENDER_STATE: std::sync::Once = std::sync::Once::new();
-            LOGGED_RENDER_STATE.call_once(|| {
-                tracing::info!("RENDER STATE: vertex_count={}, has_bind_group={}", vc, has_bg);
-            });
-
             // Render text if we have bind group and vertices
             if let Some(ref bind_group) = self.text_bind_group {
-                if vc > 0 {
-                    static LOGGED_RENDER: std::sync::Once = std::sync::Once::new();
-                    LOGGED_RENDER.call_once(|| {
-                        tracing::info!("RENDERING TEXT: calling text_renderer.render() with {} vertices", vc);
-                    });
+                if self.text_renderer.vertex_count() > 0 {
                     self.text_renderer.render(&mut render_pass, bind_group);
                 }
-            } else {
-                static LOGGED_NO_BG: std::sync::Once = std::sync::Once::new();
-                LOGGED_NO_BG.call_once(|| {
-                    tracing::error!("NO TEXT BIND GROUP - text cannot render!");
-                });
             }
         }
 
@@ -308,12 +291,6 @@ impl RendererHolder {
 
         // Prepare text renderer (upload glyph atlas and vertex data)
         self.text_renderer.prepare(&self.device, &self.queue);
-        
-        // Debug: log once
-        static LOGGED_PREPARE: std::sync::Once = std::sync::Once::new();
-        LOGGED_PREPARE.call_once(|| {
-            tracing::info!("render_layout: text_renderer.vertex_count() after prepare = {}", self.text_renderer.vertex_count());
-        });
 
         // Render to screen
         self.render()
@@ -366,36 +343,16 @@ impl RendererHolder {
         // Render terminal content
         let rows = grid.rows();
         let cols = grid.cols();
-        
-        // Debug: log grid info ONCE (use static to prevent spam)
-        static LOGGED_GRID: std::sync::Once = std::sync::Once::new();
-        LOGGED_GRID.call_once(|| {
-            tracing::info!("render_pane: grid {}x{}, first few cells:", cols, rows);
-            for row in 0..rows.min(3) {
-                let mut chars = String::new();
-                for col in 0..cols.min(15) {
-                    if let Some(cell) = grid.get_cell(row, col) {
-                        if cell.char != ' ' {
-                            chars.push(cell.char);
-                        } else {
-                            chars.push('.');
-                        }
-                    }
-                }
-                tracing::info!("  row {}: {}", row, chars);
-            }
-        });
 
-        // Offset terminal content by 1 cell to leave room for borders
-        let content_offset_x = bounds.x as f32 + cell_width as f32;
-        let content_offset_y = bounds.y as f32 + cell_height as f32;
+        // Warp-style: content starts with small padding from window edges
+        let padding = 8.0; // 8px padding
+        let content_offset_x = bounds.x as f32 + padding;
+        let content_offset_y = bounds.y as f32 + padding;
 
         // Render search bar if search is active on focused pane
         if is_focused && search_state.active {
             self.render_search_bar(bounds, cell_width, cell_height, search_state, search_input)?;
         }
-        
-        let mut chars_queued = 0usize;
 
         for row in 0..rows {
             for col in 0..cols {
@@ -404,15 +361,6 @@ impl RendererHolder {
                         // Offset by pane bounds + border offset
                         let x = content_offset_x + (col as f32 * cell_width as f32);
                         let y = content_offset_y + (row as f32 * cell_height as f32);
-                        
-                        // Debug: log first character position once
-                        if row == 0 && col == 0 && cell.char == 'H' {
-                            static LOGGED_FIRST_CHAR: std::sync::Once = std::sync::Once::new();
-                            LOGGED_FIRST_CHAR.call_once(|| {
-                                tracing::info!("First char 'H' position: x={}, y={}, bounds={:?}, cell_size={}x{}", 
-                                    x, y, bounds, cell_width, cell_height);
-                            });
-                        }
 
                         // Highlight search matches
                         let (fg_color, bg_color) = if is_focused && search_state.active {
@@ -440,17 +388,10 @@ impl RendererHolder {
                             cell.attributes.underline,
                             cell.attributes.blink,
                         )?;
-                        chars_queued += 1;
                     }
                 }
             }
         }
-        
-        // Debug: log once
-        static LOGGED_CHARS: std::sync::Once = std::sync::Once::new();
-        LOGGED_CHARS.call_once(|| {
-            tracing::info!("render_pane: queued {} characters, text vertex_count={}", chars_queued, self.text_renderer.vertex_count());
-        });
 
         // Draw pane borders
         self.draw_pane_borders(bounds, cell_width, cell_height, is_focused)?;
@@ -950,117 +891,11 @@ impl RendererHolder {
         cell_height: u32,
         is_focused: bool,
     ) -> Result<(), ui::renderer::RendererError> {
-        use terminal::parser::Color;
-
-        // Border color: bright cyan for focused, dark gray for unfocused
-        let border_color = if is_focused {
-            Color::Rgb(76, 230, 230) // Bright cyan
-        } else {
-            Color::Rgb(76, 76, 76) // Dark gray
-        };
-
-        let bg_color = Color::Rgb(2, 2, 2); // Very dark background
-
-        let x = bounds.x as f32;
-        let y = bounds.y as f32;
-        let width = bounds.width as usize;
-        let height = bounds.height as usize;
-
-        // Calculate grid dimensions for borders
-        let border_cols = width / cell_width as usize;
-        let border_rows = height / cell_height as usize;
-
-        // Draw top border
-        for col in 0..border_cols {
-            let char_x = x + (col as f32 * cell_width as f32);
-            let char_y = y;
-
-            let border_char = if col == 0 {
-                '┌' // Top-left corner
-            } else if col == border_cols - 1 {
-                '┐' // Top-right corner
-            } else {
-                '─' // Horizontal line
-            };
-
-            self.text_renderer.queue_char(
-                border_char,
-                char_x,
-                char_y,
-                border_color,
-                bg_color,
-                true,  // bold
-                false, // italic
-                false, // underline
-                false, // blink
-            )?;
-        }
-
-        // Draw bottom border
-        for col in 0..border_cols {
-            let char_x = x + (col as f32 * cell_width as f32);
-            let char_y = y + ((border_rows - 1) as f32 * cell_height as f32);
-
-            let border_char = if col == 0 {
-                '└' // Bottom-left corner
-            } else if col == border_cols - 1 {
-                '┘' // Bottom-right corner
-            } else {
-                '─' // Horizontal line
-            };
-
-            self.text_renderer.queue_char(
-                border_char,
-                char_x,
-                char_y,
-                border_color,
-                bg_color,
-                true,
-                false,
-                false,
-                false,
-            )?;
-        }
-
-        // Draw left border
-        for row in 1..border_rows - 1 {
-            let char_x = x;
-            let char_y = y + (row as f32 * cell_height as f32);
-
-            self.text_renderer.queue_char(
-                '│', // Vertical line
-                char_x,
-                char_y,
-                border_color,
-                bg_color,
-                true,
-                false,
-                false,
-                false,
-            )?;
-        }
-
-        // Draw right border
-        for row in 1..border_rows - 1 {
-            let char_x = x + ((border_cols - 1) as f32 * cell_width as f32);
-            let char_y = y + (row as f32 * cell_height as f32);
-
-            self.text_renderer.queue_char(
-                '│', // Vertical line
-                char_x,
-                char_y,
-                border_color,
-                bg_color,
-                true,
-                false,
-                false,
-                false,
-            )?;
-        }
-
+        // Warp-style: no visible borders, just subtle spacing
+        // The background already separates panes
         Ok(())
     }
-}
+        }
 
 impl TerminalApp {
     fn new() -> Self {
@@ -1098,30 +933,7 @@ impl TerminalApp {
         let pty = PtySession::spawn(config)?;
         let bounds = Rect::new(0, 0, cols as u32 * self.cell_width, rows as u32 * self.cell_height);
         
-        let mut pane = Pane::new(pty, cols as usize, rows as usize, bounds);
-        
-        // Add test text to verify rendering works
-        pane.grid.put_char_at(0, 0, 'H');
-        pane.grid.put_char_at(0, 1, 'e');
-        pane.grid.put_char_at(0, 2, 'l');
-        pane.grid.put_char_at(0, 3, 'l');
-        pane.grid.put_char_at(0, 4, 'o');
-        pane.grid.put_char_at(0, 6, 'W');
-        pane.grid.put_char_at(0, 7, 'o');
-        pane.grid.put_char_at(0, 8, 'r');
-        pane.grid.put_char_at(0, 9, 'l');
-        pane.grid.put_char_at(0, 10, 'd');
-        pane.grid.put_char_at(0, 11, '!');
-        
-        // Verify the text was stored
-        tracing::info!("Test text added to grid, verifying:");
-        for col in 0..12 {
-            if let Some(cell) = pane.grid.get_cell(0, col) {
-                tracing::info!("  grid[0][{}] = '{}' (fg: {:?}, bg: {:?})", col, cell.char, cell.fg_color, cell.bg_color);
-            }
-        }
-        
-        Ok(pane)
+        Ok(Pane::new(pty, cols as usize, rows as usize, bounds))
     }
 
     /// Create a new pane with PTY

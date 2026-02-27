@@ -810,14 +810,6 @@ impl TextRenderer {
         // Upload atlas if needed
         self.atlas.upload(queue);
 
-        // Debug: log atlas info once
-        static LOGGED_ATLAS: std::sync::Once = std::sync::Once::new();
-        LOGGED_ATLAS.call_once(|| {
-            tracing::info!("Glyph atlas: {} cached glyphs, texture_size={}", 
-                self.atlas.cached_glyph_count(), 
-                self.atlas.texture_size());
-        });
-
         // Upload vertex data
         if !self.vertices.is_empty() {
             let vertex_data: &[u8] = bytemuck::cast_slice(&self.vertices);
@@ -858,25 +850,10 @@ impl TextRenderer {
             return;
         };
 
-        // Debug: log first vertex once
-        static LOGGED_VERTEX: std::sync::Once = std::sync::Once::new();
-        LOGGED_VERTEX.call_once(|| {
-            if let Some(v) = self.vertices.first() {
-                tracing::info!("FIRST VERTEX: pos={:?}, uv={:?}, color={:?}", 
-                    v.position, v.uv, v.color);
-            }
-        });
-
         render_pass.set_pipeline(pipeline);
         render_pass.set_bind_group(0, bind_group, &[]);
         render_pass.set_vertex_buffer(0, vertex_buffer.slice(..));
         render_pass.draw(0..self.vertices.len() as u32, 0..1);
-        
-        // Debug: confirm draw call happened
-        static LOGGED_DRAW: std::sync::Once = std::sync::Once::new();
-        LOGGED_DRAW.call_once(|| {
-            tracing::info!("TEXT DRAW CALLED: {} vertices submitted to GPU", self.vertices.len());
-        });
     }
 
     /// Get the font size.
