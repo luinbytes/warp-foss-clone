@@ -3,8 +3,48 @@
 //! This module provides a minimal, sandboxed plugin architecture using wasmtime.
 //! Plugins can hook into terminal I/O but have no access to filesystem, network,
 //! or environment variables.
+//!
+//! # Example
+//!
+//! ```ignore
+//! use warp_foss::plugin::{PluginManager, PluginContext};
+//!
+//! let manager = PluginManager::new();
+//!
+//! // Load plugin from file
+//! manager.load_plugin("my_plugin.wasm".as_ref())?;
+//!
+//! // Or load from bytes
+//! manager.load_plugin_from_bytes(&wasm_bytes)?;
+//!
+//! // Call hooks
+//! let ctx = PluginContext {
+//!     cwd: Some("/home/user".to_string()),
+//!     cols: 80,
+//!     rows: 24,
+//! };
+//!
+//! let result = manager.on_output(b"Hello, World!", &ctx)?;
+//! if let Some(modified) = result.data {
+//!     println!("Modified output: {:?}", String::from_utf8_lossy(&modified));
+//! }
+//! ```
+//!
+//! # Plugin API
+//!
+//! Plugins must export:
+//! - `memory` - At least 1 page of memory
+//! - `plugin_id` - Function returning pointer to null-terminated ID string
+//!
+//! Optional exports:
+//! - `plugin_name`, `plugin_version`, `plugin_author`, `plugin_description`
+//! - `on_input(ptr, len) -> len` - Hook for user input
+//! - `on_output(ptr, len) -> len` - Hook for terminal output
 
 pub mod manager;
+
+// Re-export main types for convenience
+pub use manager::{PluginManager, PluginState, ThreadSafePluginManager};
 
 use anyhow::Result;
 
