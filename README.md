@@ -21,16 +21,17 @@ A free and open-source clone of [Warp](https://warp.dev/) terminal with AI integ
 - ✅ PTY I/O (spawn shell, read/write)
 - ✅ Split panes with layout management
 - ✅ AI command palette (Ctrl+Space)
-- ✅ Search functionality (Ctrl+Shift+F)
+- ✅ AI context-aware suggestions
+- ✅ Search functionality with scrollback (Ctrl+Shift+F)
 - ✅ Copy/paste with clipboard support
 - ✅ Status bar with git integration
 - ✅ Multiple AI providers (OpenAI, Anthropic, Ollama)
+- ✅ WASM plugin system
 
 **In Progress:**
 - 🚧 Shell integration for directory tracking
 - 🚧 Scrollback buffer
 - 🚧 Configuration system
-- 🚧 WASM plugin system
 
 ## Features (Full Vision)
 
@@ -207,25 +208,25 @@ cargo build --release --target x86_64-pc-windows-gnu
 
 ## Roadmap
 
-### Phase 1: Core Terminal ✅ (In Progress)
+### Phase 1: Core Terminal ✅ (Mostly Complete)
 - [x] GPU text rendering
 - [x] PTY spawning and I/O
 - [x] VTE escape sequence parsing
 - [x] Split panes and layout management
 - [x] Basic AI integration
 - [ ] Shell integration (directory tracking)
-- [ ] Scrollback buffer
+- [x] Scrollback buffer (search implemented)
 - [ ] Configuration system
 
 ### Phase 2: Enhanced Experience
 - [ ] Theme system with presets
 - [ ] Custom keybindings
 - [ ] Advanced search (regex, case-sensitive)
-- [ ] Better error handling and feedback
+- [x] Better error handling and feedback
 - [ ] Performance optimizations
 
 ### Phase 3: Advanced Features
-- [ ] WASM plugin system
+- [x] WASM plugin system
 - [ ] Block-based output (like Warp)
 - [ ] Command autocomplete
 - [ ] Session management
