@@ -316,7 +316,9 @@ mod tests {
         let theme = Theme::dracula();
         let toml_str = toml::to_string_pretty(&theme).unwrap();
         assert!(toml_str.contains("name = \"dracula\""));
-        assert!(toml_str.contains("[colors]"));
+        // Note: TOML serializes nested structs as [colors.black], [colors.red], etc.
+        // so we check for a specific color field instead of [colors]
+        assert!(toml_str.contains("[colors.black]"));
 
         let parsed: Theme = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed, theme);
