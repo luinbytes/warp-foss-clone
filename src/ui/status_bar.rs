@@ -3,10 +3,71 @@
 //! Renders a status bar at the bottom of the terminal with:
 //! - Current working directory
 //! - Git branch (if in a git repository)
-//! - Other useful information
+//! - Error messages feedback
+//! - Toast for user notifications for transient errors
 
 use std::path::Path;
 use std::process::Command;
+use std::time::{Duration, Instant};
+
+/// Error severity level
+#[derive(Debug, Clone, PartialEq)]
+pub enum ErrorLevel {
+    /// Transient error that should disappear after a timeout
+    Transient,
+    /// Persistent error that should stay visible until dismissed
+    Persistent,
+}
+
+/// Error message with metadata
+#[derive(Debug, Clone)]
+pub struct StatusError {
+    pub message: String,
+    pub level: ErrorLevel,
+    pub timestamp: Instant,
+}
+
+impl StatusError {
+    pub fn new(message: String, level: ErrorLevel) -> Self {
+        Self {
+            message,
+            level,
+            timestamp: Instant::now(),
+        }
+    }
+
+    pub fn transient(message: &str) -> Self {
+        Self::new(message.to_string(), ErrorLevel::Transient)
+    }
+
+    pub fn persistent(message: &str) -> Self {
+        Self::new(message.to_string(), ErrorLevel::Persistent)
+    }
+
+    pub fn is_expired(&self, timeout: Duration) -> bool {
+        self.level == ErrorLevel::Transient && self.timestamp.elapsed() > timeout
+    }
+}
+
+/// Toast notification for transient errors
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub message: String,
+    pub timestamp: Instant,
+}
+
+impl Toast {
+    pub fn new(message: String) -> Self {
+        Self {
+            message,
+            timestamp: Instant::now(),
+        }
+    }
+
+    pub fn is_expired(&self, timeout: Duration) -> bool {
+        self.timestamp.elapsed() > timeout
+    }
+}
 
 /// Status bar information
 #[derive(Debug, Clone)]
@@ -17,6 +78,12 @@ pub struct StatusBar {
     pub git_branch: Option<String>,
     /// Whether the status bar is visible
     pub visible: bool,
+    /// Current error message (if any)
+    pub error: Option<StatusError>,
+    /// Toast notifications (transient errors)
+    pub toasts: Vec<Toast>,
+    /// Timeout for transient errors and toasts
+    pub toast_timeout: Duration,
 }
 
 impl StatusBar {
@@ -26,6 +93,9 @@ impl StatusBar {
             current_dir: String::new(),
             git_branch: None,
             visible: true,
+            error: None,
+            toasts: Vec::new(),
+            toast_timeout: Duration::from_secs(5),
         }
     }
 
@@ -33,6 +103,64 @@ impl StatusBar {
     pub fn update(&mut self, dir: &str) {
         self.current_dir = dir.to_string();
         self.git_branch = Self::get_git_branch(dir);
+    }
+
+    /// Set a transient error that will auto-dismiss
+    pub fn set_error(&mut self, message: &str) {
+        self.error = Some(StatusError::transient(message));
+    }
+
+    /// Set a persistent error that stays until manually dismissed
+    pub fn set_persistent_error(&mut self, message: &str) {
+        self.error = Some(StatusError::persistent(message));
+    }
+
+    /// Clear the current error
+    pub fn clear_error(&mut self) {
+        self.error = None;
+    }
+
+    /// Check if there's an error to display
+    pub fn has_error(&self) -> bool {
+        self.error.is_some()
+    }
+
+    /// Get the error message if present
+    pub fn get_error(&self) -> Option<&str> {
+        self.error.as_ref().map(|e| e.message.as_str())
+    }
+
+    /// Add a toast notification
+    pub fn add_toast(&mut self, message: &str) {
+        self.toasts.push(Toast::new(message.to_string()));
+    }
+
+    /// Clear all toasts
+    pub fn clear_toasts(&mut self) {
+        self.toasts.clear();
+    }
+
+    /// Clean up expired transient errors and toasts
+    pub fn cleanup_expired(&mut self) {
+        // Clean up expired error
+        if let Some(ref error) = self.error {
+            if error.is_expired(self.toast_timeout) {
+                self.error = None;
+            }
+        }
+
+        // Clean up expired toasts
+        self.toasts.retain(|t| !t.is_expired(self.toast_timeout));
+    }
+
+    /// Set the toast timeout duration
+    pub fn set_toast_timeout(&mut self, duration: Duration) {
+        self.toast_timeout = duration;
+    }
+
+    /// Get toast messages to display
+    pub fn get_toasts(&self) -> Vec<&str> {
+        self.toasts.iter().map(|t| t.message.as_str()).collect()
     }
 
     /// Get the git branch for a directory

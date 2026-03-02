@@ -770,6 +770,8 @@ impl RendererHolder {
         let text_color = Color::Rgb(171, 178, 191); // Light gray
         let branch_color = Color::Rgb(152, 195, 121); // Green for git branch
         let separator_color = Color::Rgb(97, 175, 239); // Blue for separators
+        let error_color = Color::Rgb(224, 108, 117); // Red for errors
+        let toast_color = Color::Rgb(230, 192, 123); // Yellow for toasts
 
         // Draw background
         let bar_width = (self.config.width / cell_width) as usize;
@@ -786,6 +788,104 @@ impl RendererHolder {
                 false,
                 false,
             )?;
+        }
+
+        // Draw error message if present
+        if let Some(ref error) = status_bar.error {
+            let error_icon = "! ";
+            for ch in error_icon.chars() {
+                self.text_renderer.queue_char(
+                    ch,
+                    0.0,
+                    status_bar_y,
+                    error_color,
+                    bg_color,
+                    true,
+                    false,
+                    false,
+                    false,
+                )?;
+            }
+
+            let mut current_x = 2.0 * cell_width as f32;
+            for ch in error.message.chars() {
+                if (current_x / cell_width as f32) as usize >= bar_width {
+                    break;
+                }
+                self.text_renderer.queue_char(
+                    ch,
+                    current_x,
+                    status_bar_y,
+                    error_color,
+                    bg_color,
+                    false,
+                    false,
+                    false,
+                    false,
+                )?;
+                current_x += cell_width as f32;
+            }
+
+            // Add [X] to dismiss
+            let dismiss = " [x]";
+            for ch in dismiss.chars() {
+                if (current_x / cell_width as f32) as usize >= bar_width {
+                    break;
+                }
+                self.text_renderer.queue_char(
+                    ch,
+                    current_x,
+                    status_bar_y,
+                    Color::Rgb(139, 148, 158),
+                    bg_color,
+                    false,
+                    false,
+                    false,
+                    false,
+                )?;
+                current_x += cell_width as f32;
+            }
+            return Ok(());
+        }
+
+        // Draw toasts if present
+        if !status_bar.toasts.is_empty() {
+            if let Some(toast) = status_bar.toasts.first() {
+                let toast_icon = "» ";
+                for ch in toast_icon.chars() {
+                    self.text_renderer.queue_char(
+                        ch,
+                        0.0,
+                        status_bar_y,
+                        toast_color,
+                        bg_color,
+                        true,
+                        false,
+                        false,
+                        false,
+                    )?;
+                }
+
+                let mut current_x = 2.0 * cell_width as f32;
+                for ch in toast.message.chars() {
+                    if (current_x / cell_width as f32) as usize >= bar_width {
+                        break;
+                    }
+                    self.text_renderer.queue_char(
+                        ch,
+                        current_x,
+                        status_bar_y,
+                        toast_color,
+                        bg_color,
+                        false,
+                        false,
+                        false,
+                        false,
+                    )?;
+                    current_x += cell_width as f32;
+                }
+            }
+            return Ok(());
         }
 
         // Draw directory
@@ -1066,12 +1166,31 @@ impl TerminalApp {
                     if let Some(pane) = layout.get_pane_mut(focused_id) {
                         if let Ok(mut session) = pane.pty.lock() {
                             if let Err(e) = session.write(data) {
-                                tracing::error!("Failed to write to PTY: {}", e);
+                                let error_msg = format!("Write error: {}", e);
+                                tracing::error!("{}", error_msg);
+                                self.status_bar.add_toast(&error_msg);
                             }
+                        } else {
+                            let error_msg = "PTY locked - cannot write";
+                            tracing::warn!("{}", error_msg);
                         }
                     }
                 }
             }
+        }
+    }
+
+    /// Format PTY errors for user-friendly display
+    fn format_pty_error(e: &anyhow::Error) -> String {
+        let error_str = e.to_string();
+        if error_str.contains("ShellNotFound") || error_str.contains("shell not found") {
+            "Shell not found. Please set $SHELL or configure a shell in settings.".to_string()
+        } else if error_str.contains("Permission denied") || error_str.contains("permission") {
+            "Permission denied. Check shell permissions.".to_string()
+        } else if error_str.contains("No such file") {
+            "Shell executable not found. Please configure a valid shell path.".to_string()
+        } else {
+            format!("Terminal error: {}", error_str)
         }
     }
 
@@ -1141,6 +1260,9 @@ impl TerminalApp {
 
     /// Update status bar with current directory and git info
     fn update_status_bar(&mut self) {
+        // Clean up expired transient errors and toasts
+        self.status_bar.cleanup_expired();
+
         if let Some(ref layout) = self.layout {
             let focused_id = layout.focused_pane_id();
             if let Some(pane) = layout.get_pane(focused_id) {
@@ -1317,6 +1439,7 @@ impl TerminalApp {
                     if let Some(ref mut layout) = self.layout {
                         if let Err(e) = layout.split_focused(direction, new_pane) {
                             tracing::warn!("Failed to split pane: {}", e);
+                            self.status_bar.set_error(&format!("Failed to split: {}", e));
                         } else {
                             // Recalculate layout
                             if let Some(ref window) = self.window {
@@ -1327,7 +1450,9 @@ impl TerminalApp {
                     }
                 }
                 Err(e) => {
+                    let error_msg = Self::format_pty_error(&e);
                     tracing::error!("Failed to create new pane: {}", e);
+                    self.status_bar.set_error(&error_msg);
                 }
             }
         }
@@ -1462,6 +1587,7 @@ impl ApplicationHandler for TerminalApp {
             Ok(w) => Arc::new(w),
             Err(e) => {
                 tracing::error!("Failed to create window: {}", e);
+                self.status_bar.set_persistent_error(&format!("Failed to create window: {}", e));
                 event_loop.exit();
                 return;
             }
@@ -1473,30 +1599,39 @@ impl ApplicationHandler for TerminalApp {
         let rows = (size.height / self.cell_height) as u16;
 
         // Initialize renderer
-        let renderer = match pollster::block_on(RendererHolder::new(Arc::clone(&window))) {
-            Ok(r) => r,
+        let renderer: Option<RendererHolder> = match pollster::block_on(RendererHolder::new(Arc::clone(&window))) {
+            Ok(r) => Some(r),
             Err(e) => {
-                tracing::error!("Failed to initialize renderer: {}", e);
-                event_loop.exit();
-                return;
+                let error_msg = format!("Renderer error: {}. Some features may not work.", e);
+                tracing::error!("{}", error_msg);
+                self.status_bar.set_persistent_error(&error_msg);
+                None
             }
         };
 
         // Create initial pane and layout
-        let initial_pane = match self.create_initial_pane(cols.max(40), rows.max(10)) {
-            Ok(p) => p,
+        let initial_pane: Option<Pane> = match self.create_initial_pane(cols.max(40), rows.max(10)) {
+            Ok(p) => Some(p),
             Err(e) => {
+                let error_msg = Self::format_pty_error(&e);
                 tracing::error!("Failed to create initial pane: {}", e);
-                event_loop.exit();
-                return;
+                self.status_bar.set_persistent_error(&error_msg);
+                None
             }
         };
 
-        let layout = LayoutTree::new(initial_pane);
+        // If we failed to create both renderer and pane, exit
+        if renderer.is_none() && initial_pane.is_none() {
+            self.status_bar.set_persistent_error("Failed to initialize terminal. Please check your system.");
+            event_loop.exit();
+            return;
+        }
+
+        let layout = initial_pane.map(LayoutTree::new);
 
         self.window = Some(window);
-        self.renderer = Some(renderer);
-        self.layout = Some(layout);
+        self.renderer = renderer;
+        self.layout = layout;
         self.running = true;
 
         // Initialize clipboard (must be done from main thread)

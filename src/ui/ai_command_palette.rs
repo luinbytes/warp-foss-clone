@@ -213,15 +213,16 @@ impl AICommandPalette {
                             }
                         }
                         Err(e) => {
+                            let error_msg = Self::format_ai_error(&e);
                             if let Ok(mut response) = response_arc.lock() {
-                                *response = format!("Error: {}", e);
+                                *response = format!("Error: {}", error_msg);
                             }
                         }
                     }
                 });
             });
         } else {
-            self.error = Some("AI provider not configured. Please set up OpenAI API key using: warp-foss config set-openai-key <key>".to_string());
+            self.error = Some("AI not configured. Set OpenAI key: warp-foss config set-openai-key <key>".to_string());
         }
     }
 
@@ -261,6 +262,36 @@ impl AICommandPalette {
             response.clone()
         } else {
             String::new()
+        }
+    }
+
+    /// Format AI errors for user-friendly display
+    fn format_ai_error(e: &crate::ai::provider::AIError) -> String {
+        use crate::ai::provider::AIError;
+        match e {
+            AIError::Api(msg) => {
+                if msg.contains("401") || msg.contains("authentication") || msg.contains("api key") {
+                    "API key invalid or missing. Run: warp-foss config set-openai-key <key>".to_string()
+                } else if msg.contains("403") {
+                    "API key lacks permissions. Please check your API key.".to_string()
+                } else if msg.contains("404") {
+                    "API endpoint not found. Check your API configuration.".to_string()
+                } else if msg.contains("429") || msg.contains("rate limit") {
+                    "Rate limit exceeded. Please wait a moment and try again.".to_string()
+                } else if msg.contains("connection") || msg.contains("network") {
+                    "Network error. Check your internet connection.".to_string()
+                } else if msg.contains("timeout") {
+                    "Request timed out. Please try again.".to_string()
+                } else {
+                    format!("API error: {}", msg)
+                }
+            }
+            AIError::Config(msg) => {
+                format!("Configuration error: {}", msg)
+            }
+            AIError::RateLimited => {
+                "Rate limited. Please wait and try again.".to_string()
+            }
         }
     }
 }
