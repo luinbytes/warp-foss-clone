@@ -5,9 +5,22 @@
 
 use crate::ai::openai::{OpenAIConfig, OpenAIProvider};
 use crate::ai::provider::{AIProvider, CompletionOptions};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
+
+/// Context for generating AI suggestions
+pub struct SuggestionContext {
+    /// Current working directory
+    pub current_dir: Option<String>,
+    /// Git branch (if in a git repo)
+    pub git_branch: Option<String>,
+    /// Shell type (bash, zsh, fish, etc.)
+    pub shell: Option<String>,
+    /// Recent terminal content (last few lines)
+    pub recent_output: Option<String>,
+}
 
 /// State of the AI command palette
 #[derive(Debug, Clone, PartialEq)]
@@ -227,13 +240,33 @@ impl AICommandPalette {
     }
 
     /// Get suggested commands based on context
-    pub fn get_suggestions(&self, _context: &str) -> Vec<String> {
-        // TODO: Implement context-aware suggestions
-        vec![
-            "explain last command".to_string(),
-            "suggest fix for error".to_string(),
-            "generate command for...".to_string(),
-        ]
+    pub fn get_suggestions(&self, context: &SuggestionContext) -> Vec<String> {
+        let mut suggestions = Vec::new();
+
+        // Git-related suggestions
+        if context.git_branch.is_some() {
+            suggestions.push("git status".to_string());
+            suggestions.push("git log --oneline -5".to_string());
+            suggestions.push("show uncommitted changes".to_string());
+        }
+
+        // Directory-based suggestions
+        if let Some(ref dir) = context.current_dir {
+            if dir.contains("node_modules") || dir.ends_with("/src") {
+                suggestions.push("npm run dev".to_string());
+                suggestions.push("npm test".to_string());
+            } else if (dir.contains("cargo") || dir.ends_with("/src")) && Path::new("Cargo.toml").exists() {
+                suggestions.push("cargo build".to_string());
+                suggestions.push("cargo test".to_string());
+            }
+            suggestions.push(format!("list files in {}", dir));
+        }
+
+        // Generic helpful suggestions
+        suggestions.push("explain last command".to_string());
+        suggestions.push("suggest fix for error".to_string());
+
+        suggestions
     }
 
     /// Update processing state (call this in render loop)
@@ -378,9 +411,29 @@ mod tests {
     #[test]
     fn test_palette_suggestions() {
         let palette = AICommandPalette::new();
-        let suggestions = palette.get_suggestions("test context");
+        let context = SuggestionContext {
+            current_dir: None,
+            git_branch: None,
+            shell: None,
+            recent_output: None,
+        };
+        let suggestions = palette.get_suggestions(&context);
         assert!(!suggestions.is_empty());
         assert!(suggestions.contains(&"explain last command".to_string()));
+    }
+
+    #[test]
+    fn test_palette_suggestions_with_git() {
+        let palette = AICommandPalette::new();
+        let context = SuggestionContext {
+            current_dir: Some("/home/user/project".to_string()),
+            git_branch: Some("main".to_string()),
+            shell: Some("bash".to_string()),
+            recent_output: None,
+        };
+        let suggestions = palette.get_suggestions(&context);
+        assert!(suggestions.contains(&"git status".to_string()));
+        assert!(suggestions.contains(&"git log --oneline -5".to_string()));
     }
 
     #[test]
