@@ -877,11 +877,359 @@ impl TextRenderer {
 mod tests {
     use super::*;
 
+    // === TextError Tests ===
+
     #[test]
-    fn test_atlas_creation() {
-        // This test would need a wgpu device which is hard to create in unit tests
-        // Just test that the error types work
-        let err = TextError::FontLoad("test".to_string());
-        assert!(err.to_string().contains("test"));
+    fn test_text_error_font_load() {
+        let err = TextError::FontLoad("test error".to_string());
+        assert!(err.to_string().contains("Failed to load font"));
+        assert!(err.to_string().contains("test error"));
+    }
+
+    #[test]
+    fn test_text_error_texture_creation() {
+        let err = TextError::TextureCreation("gpu error".to_string());
+        assert!(err.to_string().contains("Failed to create texture"));
+        assert!(err.to_string().contains("gpu error"));
+    }
+
+    #[test]
+    fn test_text_error_glyph_not_in_atlas() {
+        let err = TextError::GlyphNotInAtlas('X');
+        assert!(err.to_string().contains("Glyph not in atlas"));
+        assert!(err.to_string().contains('X'));
+    }
+
+    #[test]
+    fn test_text_error_atlas_full() {
+        let err = TextError::AtlasFull;
+        assert!(err.to_string().contains("Atlas is full"));
+    }
+
+    #[test]
+    fn test_text_error_debug() {
+        let err = TextError::FontLoad("debug test".to_string());
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("FontLoad"));
+    }
+
+    // === AtlasGlyph Tests ===
+
+    #[test]
+    fn test_atlas_glyph_fields() {
+        let glyph = AtlasGlyph {
+            uv_min: (0.0, 0.0),
+            uv_max: (0.1, 0.1),
+            width: 10,
+            height: 20,
+            advance_width: 12.0,
+            left_side_bearing: 1.0,
+            ascent: 15.0,
+        };
+
+        assert_eq!(glyph.uv_min, (0.0, 0.0));
+        assert_eq!(glyph.uv_max, (0.1, 0.1));
+        assert_eq!(glyph.width, 10);
+        assert_eq!(glyph.height, 20);
+        assert!((glyph.advance_width - 12.0).abs() < f32::EPSILON);
+        assert!((glyph.left_side_bearing - 1.0).abs() < f32::EPSILON);
+        assert!((glyph.ascent - 15.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_atlas_glyph_copy_clone() {
+        let glyph = AtlasGlyph {
+            uv_min: (0.0, 0.0),
+            uv_max: (0.5, 0.5),
+            width: 32,
+            height: 32,
+            advance_width: 16.0,
+            left_side_bearing: 2.0,
+            ascent: 28.0,
+        };
+
+        let glyph_copy = glyph;
+        assert_eq!(glyph_copy.width, glyph.width);
+        assert_eq!(glyph_copy.height, glyph.height);
+
+        let glyph_clone = glyph.clone();
+        assert_eq!(glyph_clone.width, glyph.width);
+        assert_eq!(glyph_clone.height, glyph.height);
+    }
+
+    // === ANSI Palette Tests ===
+
+    #[test]
+    fn test_ansi_palette_basic_colors() {
+        let palette = &*ANSI_PALETTE;
+
+        // Black (index 0)
+        assert_eq!(palette[0], [0.0, 0.0, 0.0, 1.0]);
+
+        // Red (index 1)
+        assert_eq!(palette[1], [0.8, 0.0, 0.0, 1.0]);
+
+        // Green (index 2)
+        assert_eq!(palette[2], [0.0, 0.8, 0.0, 1.0]);
+
+        // Yellow (index 3)
+        assert_eq!(palette[3], [0.8, 0.8, 0.0, 1.0]);
+
+        // Blue (index 4)
+        assert_eq!(palette[4], [0.0, 0.0, 0.8, 1.0]);
+
+        // Magenta (index 5)
+        assert_eq!(palette[5], [0.8, 0.0, 0.8, 1.0]);
+
+        // Cyan (index 6)
+        assert_eq!(palette[6], [0.0, 0.8, 0.8, 1.0]);
+
+        // White (index 7)
+        assert_eq!(palette[7], [0.8, 0.8, 0.8, 1.0]);
+    }
+
+    #[test]
+    fn test_ansi_palette_bright_colors() {
+        let palette = &*ANSI_PALETTE;
+
+        // Bright Black (index 8)
+        assert_eq!(palette[8], [0.5, 0.5, 0.5, 1.0]);
+
+        // Bright Red (index 9)
+        assert_eq!(palette[9], [1.0, 0.0, 0.0, 1.0]);
+
+        // Bright Green (index 10)
+        assert_eq!(palette[10], [0.0, 1.0, 0.0, 1.0]);
+
+        // Bright Yellow (index 11)
+        assert_eq!(palette[11], [1.0, 1.0, 0.0, 1.0]);
+
+        // Bright Blue (index 12)
+        assert_eq!(palette[12], [0.0, 0.0, 1.0, 1.0]);
+
+        // Bright Magenta (index 13)
+        assert_eq!(palette[13], [1.0, 0.0, 1.0, 1.0]);
+
+        // Bright Cyan (index 14)
+        assert_eq!(palette[14], [0.0, 1.0, 1.0, 1.0]);
+
+        // Bright White (index 15)
+        assert_eq!(palette[15], [1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn test_ansi_palette_color_cube() {
+        let palette = &*ANSI_PALETTE;
+
+        // Color cube starts at index 16
+        // First color (16) should be black (0,0,0 in the 6x6x6 cube)
+        assert_eq!(palette[16], [0.0, 0.0, 0.0, 1.0]);
+
+        // Index 16 + 1 (r=0, g=0, b=1) - should have some blue
+        assert!(palette[17][2] > 0.0); // Blue channel
+        assert_eq!(palette[17][0], 0.0); // Red channel
+        assert_eq!(palette[17][1], 0.0); // Green channel
+
+        // Index 16 + 36 (r=1, g=0, b=0) - should have some red
+        assert!(palette[52][0] > 0.0); // Red channel
+        assert_eq!(palette[52][1], 0.0); // Green channel
+        assert_eq!(palette[52][2], 0.0); // Blue channel
+    }
+
+    #[test]
+    fn test_ansi_palette_grayscale() {
+        let palette = &*ANSI_PALETTE;
+
+        // Grayscale starts at index 232
+        // First grayscale (232) should be darkest
+        let first_gray = palette[232];
+        assert!((first_gray[0] - first_gray[1]).abs() < f32::EPSILON);
+        assert!((first_gray[1] - first_gray[2]).abs() < f32::EPSILON);
+        assert_eq!(first_gray[3], 1.0); // Alpha
+
+        // Last grayscale (255) should be brightest
+        let last_gray = palette[255];
+        assert!((last_gray[0] - last_gray[1]).abs() < f32::EPSILON);
+        assert!((last_gray[1] - last_gray[2]).abs() < f32::EPSILON);
+        assert_eq!(last_gray[3], 1.0); // Alpha
+
+        // Grayscale should increase from dark to light
+        assert!(last_gray[0] > first_gray[0]);
+    }
+
+    #[test]
+    fn test_ansi_palette_length() {
+        let palette = &*ANSI_PALETTE;
+        assert_eq!(palette.len(), 256);
+    }
+
+    // === TextVertex Tests ===
+
+    #[test]
+    fn test_text_vertex_creation() {
+        let vertex = TextVertex {
+            position: [100.0, 200.0],
+            uv: [0.5, 0.5],
+            color: [1.0, 0.0, 0.0, 1.0],
+            attributes: [1.0, 0.0, 1.0, 0.0], // bold, underline
+        };
+
+        assert_eq!(vertex.position, [100.0, 200.0]);
+        assert_eq!(vertex.uv, [0.5, 0.5]);
+        assert_eq!(vertex.color, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(vertex.attributes, [1.0, 0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn test_text_vertex_buffer_layout() {
+        let layout = TextVertex::desc();
+
+        // Check stride is correct (4 f32 arrays: 2 + 2 + 4 + 4 = 12 f32s = 48 bytes)
+        assert_eq!(layout.array_stride, 48);
+
+        // Check vertex step mode
+        assert_eq!(layout.step_mode, wgpu::VertexStepMode::Vertex);
+
+        // Check we have 4 attributes
+        assert_eq!(layout.attributes.len(), 4);
+    }
+
+    #[test]
+    fn test_text_vertex_attribute_offsets() {
+        let attrs = &TextVertex::ATTRIBS;
+
+        // Position: offset 0
+        assert_eq!(attrs[0].offset, 0);
+        assert_eq!(attrs[0].shader_location, 0);
+
+        // UV: offset 8 (2 x f32)
+        assert_eq!(attrs[1].offset, 8);
+        assert_eq!(attrs[1].shader_location, 1);
+
+        // Color: offset 16 (4 x f32 from start, but UV is 2 f32s = 8 bytes)
+        // Actually: position is 2 f32s = 8 bytes, so UV offset is 8
+        // Color offset = position (8) + UV (8) = 16
+        assert_eq!(attrs[2].offset, 16);
+        assert_eq!(attrs[2].shader_location, 2);
+
+        // Attributes: offset 32 (position 8 + uv 8 + color 16)
+        assert_eq!(attrs[3].offset, 32);
+        assert_eq!(attrs[3].shader_location, 3);
+    }
+
+    #[test]
+    fn test_text_vertex_copy_clone() {
+        let vertex = TextVertex {
+            position: [10.0, 20.0],
+            uv: [0.25, 0.75],
+            color: [0.5, 0.5, 0.5, 1.0],
+            attributes: [0.0; 4],
+        };
+
+        let vertex_copy = vertex;
+        assert_eq!(vertex_copy.position, vertex.position);
+
+        let vertex_clone = vertex.clone();
+        assert_eq!(vertex_clone.position, vertex.position);
+    }
+
+    // === GlyphAtlas Tests (non-GPU) ===
+
+    #[test]
+    fn test_glyph_atlas_new() {
+        // GlyphAtlas::new doesn't require GPU until init_gpu is called
+        let font_size = 16.0;
+        // We can't test new() directly because it requires a Device reference
+        // even though it doesn't use it. But we can verify the constants.
+        assert_eq!(MAX_GLYPH_SIZE, 64);
+        assert_eq!(ATLAS_COLUMNS, 16);
+        assert_eq!(ATLAS_ROWS, 16);
+        assert_eq!(ATLAS_SIZE, 1024); // 64 * 16
+    }
+
+    #[test]
+    fn test_atlas_constants() {
+        // Verify atlas dimensions are reasonable
+        assert!(ATLAS_SIZE > 0);
+        assert!(ATLAS_COLUMNS > 0);
+        assert!(ATLAS_ROWS > 0);
+        assert!(MAX_GLYPH_SIZE > 0);
+
+        // Verify the math works out
+        assert_eq!(ATLAS_SIZE, MAX_GLYPH_SIZE * ATLAS_COLUMNS);
+        assert_eq!(ATLAS_SIZE, MAX_GLYPH_SIZE * ATLAS_ROWS);
+
+        // Total capacity
+        let total_glyphs = ATLAS_COLUMNS * ATLAS_ROWS;
+        assert_eq!(total_glyphs, 256);
+    }
+
+    // === Color Conversion Tests ===
+
+    #[test]
+    fn test_color_to_rgba_default() {
+        let default_fg = [0.9, 0.9, 0.9, 1.0];
+        let default_bg = [0.05, 0.05, 0.05, 1.0];
+
+        let result = TextRenderer::color_to_rgba(Color::Default, default_fg, default_bg);
+        assert_eq!(result, default_fg);
+    }
+
+    #[test]
+    fn test_color_to_rgba_indexed() {
+        let default_fg = [0.9, 0.9, 0.9, 1.0];
+        let default_bg = [0.05, 0.05, 0.05, 1.0];
+        let palette = &*ANSI_PALETTE;
+
+        // Test basic colors
+        let red = TextRenderer::color_to_rgba(Color::Indexed(1), default_fg, default_bg);
+        assert_eq!(red, palette[1]);
+
+        let green = TextRenderer::color_to_rgba(Color::Indexed(2), default_fg, default_bg);
+        assert_eq!(green, palette[2]);
+
+        // Test bright colors
+        let bright_red = TextRenderer::color_to_rgba(Color::Indexed(9), default_fg, default_bg);
+        assert_eq!(bright_red, palette[9]);
+
+        // Test grayscale
+        let gray = TextRenderer::color_to_rgba(Color::Indexed(232), default_fg, default_bg);
+        assert_eq!(gray, palette[232]);
+    }
+
+    #[test]
+    fn test_color_to_rgba_rgb() {
+        let default_fg = [0.9, 0.9, 0.9, 1.0];
+        let default_bg = [0.05, 0.05, 0.05, 1.0];
+
+        // Pure red
+        let red = TextRenderer::color_to_rgba(Color::Rgb(255, 0, 0), default_fg, default_bg);
+        assert_eq!(red, [1.0, 0.0, 0.0, 1.0]);
+
+        // Pure green
+        let green = TextRenderer::color_to_rgba(Color::Rgb(0, 255, 0), default_fg, default_bg);
+        assert_eq!(green, [0.0, 1.0, 0.0, 1.0]);
+
+        // Pure blue
+        let blue = TextRenderer::color_to_rgba(Color::Rgb(0, 0, 255), default_fg, default_bg);
+        assert_eq!(blue, [0.0, 0.0, 1.0, 1.0]);
+
+        // Mid gray
+        let gray = TextRenderer::color_to_rgba(Color::Rgb(128, 128, 128), default_fg, default_bg);
+        assert!((gray[0] - 128.0 / 255.0).abs() < f32::EPSILON);
+        assert!((gray[1] - 128.0 / 255.0).abs() < f32::EPSILON);
+        assert!((gray[2] - 128.0 / 255.0).abs() < f32::EPSILON);
+        assert_eq!(gray[3], 1.0);
+    }
+
+    #[test]
+    fn test_color_to_rgba_indexed_out_of_bounds() {
+        let default_fg = [0.9, 0.9, 0.9, 1.0];
+        let default_bg = [0.05, 0.05, 0.05, 1.0];
+
+        // The Color::Indexed uses u8, so max is 255 which is valid
+        // But we can test that the palette lookup works correctly
+        let color = TextRenderer::color_to_rgba(Color::Indexed(255), default_fg, default_bg);
+        assert_eq!(color, ANSI_PALETTE[255]);
     }
 }
