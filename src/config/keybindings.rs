@@ -1,10 +1,14 @@
 //! Keybindings configuration
+//!
+//! This module provides keybinding types for future configuration support.
+//! Currently unused but kept for integration with the config system.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Modifier keys
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[allow(dead_code)]
 pub enum Modifier {
     /// Control key
     Ctrl,
@@ -18,6 +22,7 @@ pub enum Modifier {
 
 /// A key combination (key + optional modifiers)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[allow(dead_code)]
 pub struct KeyCombo {
     /// The key (e.g., "c", "Enter", "Tab", "F1")
     pub key: String,
@@ -26,6 +31,7 @@ pub struct KeyCombo {
     pub modifiers: Vec<Modifier>,
 }
 
+#[allow(dead_code)]
 impl KeyCombo {
     /// Create a new key combination
     pub fn new(key: impl Into<String>, modifiers: Vec<Modifier>) -> Self {
@@ -64,6 +70,7 @@ impl KeyCombo {
 /// Terminal actions that can be bound to keys
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
 pub enum Action {
     /// Copy selected text to clipboard
     Copy,
@@ -109,6 +116,7 @@ pub enum Action {
 
 /// Keybindings configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct Keybindings {
     /// Map of key combinations to actions
     #[serde(default = "default_keybindings")]
@@ -165,6 +173,7 @@ fn default_keybindings() -> HashMap<KeyCombo, Action> {
     bindings
 }
 
+#[allow(dead_code)]
 impl Keybindings {
     /// Create a new keybindings configuration with defaults
     pub fn new() -> Self {

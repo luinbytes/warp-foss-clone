@@ -611,7 +611,7 @@ fn resize_pane_in_node(
             // Single pane cannot be resized
             Err((LayoutNode::Pane(pane), "Cannot resize: no adjacent pane".to_string()))
         }
-        LayoutNode::HorizontalSplit { mut children, mut ratios } => {
+        LayoutNode::HorizontalSplit { children, mut ratios } => {
             // Only resize if direction matches
             if direction == SplitDirection::Horizontal {
                 // Find which child contains the pane
@@ -677,7 +677,7 @@ fn resize_pane_in_node(
                 ratios,
             })
         }
-        LayoutNode::VerticalSplit { mut children, mut ratios } => {
+        LayoutNode::VerticalSplit { children, mut ratios } => {
             // Only resize if direction matches
             if direction == SplitDirection::Vertical {
                 // Find which child contains the pane

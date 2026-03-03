@@ -1,4 +1,7 @@
 //! Application settings loaded from config file
+//!
+//! This module provides configuration types for future config file support.
+//! Currently unused but kept for integration with the config system.
 
 use crate::config::keybindings::Keybindings;
 use crate::config::theme::ThemeConfig;
@@ -8,6 +11,7 @@ use std::path::PathBuf;
 
 /// Main configuration structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct Config {
     /// Terminal settings
     #[serde(default)]
@@ -40,6 +44,7 @@ impl Default for Config {
 
 /// Terminal configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct TerminalConfig {
     /// Shell command to spawn (defaults to $SHELL or /bin/sh)
     #[serde(default)]
@@ -80,6 +85,7 @@ impl Default for TerminalConfig {
 
 /// Font configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct FontConfig {
     /// Font family name
     #[serde(default = "default_font_family")]

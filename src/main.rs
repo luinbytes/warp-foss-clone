@@ -14,12 +14,10 @@ mod search;
 mod terminal;
 mod ui;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use terminal::grid::TerminalGrid;
-use terminal::parser::TerminalParser;
 use terminal::pty::{PtyConfig, PtySession};
 use ui::ai_command_palette::AICommandPalette;
 use ui::input::InputHandler;
@@ -37,10 +35,11 @@ use winit::{
 };
 
 /// Configuration for the terminal application
+#[allow(dead_code)]
 struct AppConfig {
     /// Initial terminal columns
     cols: u16,
-    /// Initial terminal rows  
+    /// Initial terminal rows
     rows: u16,
 }
 
@@ -988,10 +987,10 @@ impl RendererHolder {
 
     fn draw_pane_borders(
         &mut self,
-        bounds: Rect,
-        cell_width: u32,
-        cell_height: u32,
-        is_focused: bool,
+        _bounds: Rect,
+        _cell_width: u32,
+        _cell_height: u32,
+        _is_focused: bool,
     ) -> Result<(), ui::renderer::RendererError> {
         // Warp-style: no visible borders, just subtle spacing
         // The background already separates panes
@@ -1001,7 +1000,7 @@ impl RendererHolder {
 
 impl TerminalApp {
     fn new() -> Self {
-        let config = AppConfig::default();
+        let _config = AppConfig::default();
 
         Self {
             window: None,
@@ -1099,7 +1098,7 @@ impl TerminalApp {
             
             for _ in 0..5 {
                 let read_result = {
-                    if let Ok(mut session) = pane.pty.lock() {
+                    if let Ok(session) = pane.pty.lock() {
                         let mut buf = vec![0u8; 4096];
                         match session.read(&mut buf) {
                             Ok(0) => {

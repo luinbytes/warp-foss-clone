@@ -43,7 +43,8 @@
 
 pub mod manager;
 
-// Re-export main types for convenience
+// Re-export main types for convenience (kept for future use)
+#[allow(unused_imports)]
 pub use manager::{PluginManager, PluginState, ThreadSafePluginManager};
 
 use anyhow::Result;
