@@ -128,8 +128,7 @@ impl AICommandPalette {
             // Find the byte position before cursor
             let prev_pos = self.input[..self.cursor_pos]
                 .chars()
-                .rev()
-                .next()
+                .next_back()
                 .map(|c| self.cursor_pos - c.len_utf8())
                 .unwrap_or(0);
 
@@ -158,8 +157,7 @@ impl AICommandPalette {
         if self.cursor_pos > 0 {
             let prev_char_len = self.input[..self.cursor_pos]
                 .chars()
-                .rev()
-                .next()
+                .next_back()
                 .map(|c| c.len_utf8())
                 .unwrap_or(0);
             self.cursor_pos -= prev_char_len;
@@ -209,10 +207,7 @@ impl AICommandPalette {
             thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(async {
-                    let config = OpenAIConfig {
-                        api_key,
-                        model,
-                    };
+                    let config = OpenAIConfig { api_key, model };
                     let async_provider = OpenAIProvider::new(config);
 
                     let opts = CompletionOptions {
@@ -236,7 +231,10 @@ impl AICommandPalette {
                 });
             });
         } else {
-            self.error = Some("AI not configured. Set OpenAI key: warp-foss config set-openai-key <key>".to_string());
+            self.error = Some(
+                "AI not configured. Set OpenAI key: warp-foss config set-openai-key <key>"
+                    .to_string(),
+            );
         }
     }
 
@@ -257,7 +255,9 @@ impl AICommandPalette {
             if dir.contains("node_modules") || dir.ends_with("/src") {
                 suggestions.push("npm run dev".to_string());
                 suggestions.push("npm test".to_string());
-            } else if (dir.contains("cargo") || dir.ends_with("/src")) && Path::new("Cargo.toml").exists() {
+            } else if (dir.contains("cargo") || dir.ends_with("/src"))
+                && Path::new("Cargo.toml").exists()
+            {
                 suggestions.push("cargo build".to_string());
                 suggestions.push("cargo test".to_string());
             }
@@ -305,8 +305,10 @@ impl AICommandPalette {
         use crate::ai::provider::AIError;
         match e {
             AIError::Api(msg) => {
-                if msg.contains("401") || msg.contains("authentication") || msg.contains("api key") {
-                    "API key invalid or missing. Run: warp-foss config set-openai-key <key>".to_string()
+                if msg.contains("401") || msg.contains("authentication") || msg.contains("api key")
+                {
+                    "API key invalid or missing. Run: warp-foss config set-openai-key <key>"
+                        .to_string()
                 } else if msg.contains("403") {
                     "API key lacks permissions. Please check your API key.".to_string()
                 } else if msg.contains("404") {
@@ -324,9 +326,7 @@ impl AICommandPalette {
             AIError::Config(msg) => {
                 format!("Configuration error: {}", msg)
             }
-            AIError::RateLimited => {
-                "Rate limited. Please wait and try again.".to_string()
-            }
+            AIError::RateLimited => "Rate limited. Please wait and try again.".to_string(),
         }
     }
 }

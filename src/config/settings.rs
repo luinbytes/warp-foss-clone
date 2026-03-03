@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Main configuration structure
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[allow(dead_code)]
 pub struct Config {
     /// Terminal settings
@@ -28,18 +28,6 @@ pub struct Config {
     /// Window settings
     #[serde(default)]
     pub window: WindowConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            terminal: TerminalConfig::default(),
-            font: FontConfig::default(),
-            theme: ThemeConfig::default(),
-            keybindings: Keybindings::default(),
-            window: WindowConfig::default(),
-        }
-    }
 }
 
 /// Terminal configuration
@@ -187,8 +175,7 @@ impl Config {
                 .with_context(|| format!("Failed to create config directory: {:?}", parent))?;
         }
 
-        let contents = toml::to_string_pretty(self)
-            .context("Failed to serialize config")?;
+        let contents = toml::to_string_pretty(self).context("Failed to serialize config")?;
 
         std::fs::write(path, &contents)
             .with_context(|| format!("Failed to write config file: {:?}", path))?;
@@ -203,10 +190,11 @@ impl Config {
     /// 2. ~/.config/warp-foss/config.toml
     pub fn config_path() -> Result<PathBuf> {
         if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
-            Ok(PathBuf::from(xdg_config).join("warp-foss").join("config.toml"))
+            Ok(PathBuf::from(xdg_config)
+                .join("warp-foss")
+                .join("config.toml"))
         } else {
-            let home = dirs::home_dir()
-                .context("Could not determine home directory")?;
+            let home = dirs::home_dir().context("Could not determine home directory")?;
             Ok(home.join(".config").join("warp-foss").join("config.toml"))
         }
     }

@@ -13,7 +13,7 @@ pub struct SearchMatch {
 }
 
 /// Search state for the terminal
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SearchState {
     /// Current search pattern (as regex)
     pattern: Option<Regex>,
@@ -25,18 +25,6 @@ pub struct SearchState {
     pub active: bool,
     /// Search query string
     pub query: String,
-}
-
-impl Default for SearchState {
-    fn default() -> Self {
-        Self {
-            pattern: None,
-            matches: Vec::new(),
-            current_match_index: None,
-            active: false,
-            query: String::new(),
-        }
-    }
 }
 
 impl SearchState {
@@ -152,16 +140,15 @@ impl SearchState {
 
     /// Check if a cell at (row, col) is part of the current match
     pub fn is_current_match(&self, row: usize, col: usize) -> bool {
-        if let Some(ref current) = self.current_match() {
-            current.row == row && current.cols.contains(&col)
-        } else {
-            false
-        }
+        self.current_match()
+            .is_some_and(|current| current.row == row && current.cols.contains(&col))
     }
 
     /// Check if a cell at (row, col) is part of any match
     pub fn is_match(&self, row: usize, col: usize) -> bool {
-        self.matches.iter().any(|m| m.row == row && m.cols.contains(&col))
+        self.matches
+            .iter()
+            .any(|m| m.row == row && m.cols.contains(&col))
     }
 }
 
@@ -190,7 +177,7 @@ mod tests {
         let mut state = SearchState::new();
         state.set_pattern("test").unwrap();
 
-        let lines = vec![
+        let lines = [
             (0, "this is a test string"),
             (1, "another test"),
             (2, "no match here"),
@@ -207,11 +194,7 @@ mod tests {
         let mut state = SearchState::new();
         state.set_pattern("test").unwrap();
 
-        let lines = vec![
-            (0, "test 1"),
-            (1, "test 2"),
-            (2, "test 3"),
-        ];
+        let lines = [(0, "test 1"), (1, "test 2"), (2, "test 3")];
 
         state.find_matches(lines.iter().map(|(r, t)| (*r, *t)));
 
@@ -241,9 +224,7 @@ mod tests {
         let mut state = SearchState::new();
         state.set_pattern("te.*t").unwrap();
 
-        let lines = vec![
-            (0, "test text"),
-        ];
+        let lines = [(0, "test text")];
 
         state.find_matches(lines.iter().map(|(r, t)| (*r, *t)));
 
@@ -259,9 +240,7 @@ mod tests {
         let mut state = SearchState::new();
         state.set_pattern("TEST").unwrap();
 
-        let lines = vec![
-            (0, "test Test TEST"),
-        ];
+        let lines = [(0, "test Test TEST")];
 
         state.find_matches(lines.iter().map(|(r, t)| (*r, *t)));
 
@@ -274,9 +253,7 @@ mod tests {
         let mut state = SearchState::new();
         state.set_pattern("test").unwrap();
 
-        let lines = vec![
-            (0, "this is a test"),
-        ];
+        let lines = [(0, "this is a test")];
 
         state.find_matches(lines.iter().map(|(r, t)| (*r, *t)));
 

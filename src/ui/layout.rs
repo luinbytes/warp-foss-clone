@@ -30,10 +30,7 @@ impl Rect {
 
     /// Check if a point is inside this rectangle
     pub fn contains(&self, x: u32, y: u32) -> bool {
-        x >= self.x
-            && x < self.x + self.width
-            && y >= self.y
-            && y < self.y + self.height
+        x >= self.x && x < self.x + self.width && y >= self.y && y < self.y + self.height
     }
 }
 
@@ -65,12 +62,7 @@ pub struct Pane {
 
 impl Pane {
     /// Create a new pane with the given PTY and dimensions
-    pub fn new(
-        pty: PtySession,
-        cols: usize,
-        rows: usize,
-        bounds: Rect,
-    ) -> Self {
+    pub fn new(pty: PtySession, cols: usize, rows: usize, bounds: Rect) -> Self {
         let id = Uuid::new_v4();
         let title = "Terminal".to_string();
 
@@ -93,9 +85,10 @@ impl Pane {
 }
 
 /// A node in the layout tree
+#[allow(clippy::vec_box)]
 pub enum LayoutNode {
     /// Leaf node containing a single pane
-    Pane(Pane),
+    Pane(Box<Pane>),
     /// Horizontal split (panes side by side)
     HorizontalSplit {
         children: Vec<Box<LayoutNode>>,
@@ -195,7 +188,7 @@ impl LayoutTree {
     /// Create a new layout tree with a single pane
     pub fn new(initial_pane: Pane) -> Self {
         let focused_pane = initial_pane.id;
-        let root = LayoutNode::Pane(initial_pane);
+        let root = LayoutNode::Pane(Box::new(initial_pane));
 
         Self { root, focused_pane }
     }
@@ -246,20 +239,27 @@ impl LayoutTree {
     }
 
     /// Split the focused pane in the given direction
-    pub fn split_focused(&mut self, direction: SplitDirection, new_pane: Pane) -> Result<(), String> {
+    pub fn split_focused(
+        &mut self,
+        direction: SplitDirection,
+        new_pane: Pane,
+    ) -> Result<(), String> {
         if self.root.pane_count() >= 8 {
             return Err("Maximum pane limit (8) reached".to_string());
         }
 
         let focused_id = self.focused_pane;
         let new_pane_id = new_pane.id;
-        
+
         // Replace the focused pane with a split containing the old and new panes
         if let Some(_pane) = self.root.find_pane(focused_id) {
             // Extract the old pane by replacing root with a placeholder
             // This is a workaround for not being able to clone PtySession
-            let old_root = std::mem::replace(&mut self.root, LayoutNode::Pane(create_placeholder_pane()));
-            
+            let old_root = std::mem::replace(
+                &mut self.root,
+                LayoutNode::Pane(Box::new(create_placeholder_pane())),
+            );
+
             // Try to split the old root
             match self.try_split_node(old_root, focused_id, direction, new_pane) {
                 Ok(new_root) => {
@@ -293,14 +293,14 @@ impl LayoutTree {
                     SplitDirection::Horizontal => LayoutNode::HorizontalSplit {
                         children: vec![
                             Box::new(LayoutNode::Pane(old_pane)),
-                            Box::new(LayoutNode::Pane(new_pane)),
+                            Box::new(LayoutNode::Pane(Box::new(new_pane))),
                         ],
                         ratios: vec![0.5, 0.5],
                     },
                     SplitDirection::Vertical => LayoutNode::VerticalSplit {
                         children: vec![
                             Box::new(LayoutNode::Pane(old_pane)),
-                            Box::new(LayoutNode::Pane(new_pane)),
+                            Box::new(LayoutNode::Pane(Box::new(new_pane))),
                         ],
                         ratios: vec![0.5, 0.5],
                     },
@@ -311,64 +311,70 @@ impl LayoutTree {
                 // Not the target pane, return unchanged
                 Ok(LayoutNode::Pane(pane))
             }
-            LayoutNode::HorizontalSplit { mut children, ratios } => {
+            LayoutNode::HorizontalSplit {
+                mut children,
+                ratios,
+            } => {
                 // Recurse into children
-                let mut found = false;
                 for child in &mut children {
                     if child.find_pane(target_id).is_some() {
                         // Take ownership of child
-                        let old_child = std::mem::replace(child, Box::new(LayoutNode::Pane(create_placeholder_pane())));
+                        let old_child = std::mem::replace(
+                            child,
+                            Box::new(LayoutNode::Pane(Box::new(create_placeholder_pane()))),
+                        );
                         match self.try_split_node(*old_child, target_id, direction, new_pane) {
                             Ok(new_child) => {
-                                *child = Box::new(new_child);
-                                found = true;
+                                **child = new_child;
                                 break;
                             }
                             Err((old_child, err)) => {
-                                *child = Box::new(old_child);
-                                return Err((LayoutNode::HorizontalSplit { children, ratios }, err));
+                                **child = old_child;
+                                return Err((
+                                    LayoutNode::HorizontalSplit { children, ratios },
+                                    err,
+                                ));
                             }
                         }
                     }
                 }
-                if found {
-                    Ok(LayoutNode::HorizontalSplit { children, ratios })
-                } else {
-                    Ok(LayoutNode::HorizontalSplit { children, ratios })
-                }
+                Ok(LayoutNode::HorizontalSplit { children, ratios })
             }
-            LayoutNode::VerticalSplit { mut children, ratios } => {
+            LayoutNode::VerticalSplit {
+                mut children,
+                ratios,
+            } => {
                 // Recurse into children
-                let mut found = false;
                 for child in &mut children {
                     if child.find_pane(target_id).is_some() {
                         // Take ownership of child
-                        let old_child = std::mem::replace(child, Box::new(LayoutNode::Pane(create_placeholder_pane())));
+                        let old_child = std::mem::replace(
+                            child,
+                            Box::new(LayoutNode::Pane(Box::new(create_placeholder_pane()))),
+                        );
                         match self.try_split_node(*old_child, target_id, direction, new_pane) {
                             Ok(new_child) => {
-                                *child = Box::new(new_child);
-                                found = true;
+                                **child = new_child;
                                 break;
                             }
                             Err((old_child, err)) => {
-                                *child = Box::new(old_child);
+                                **child = old_child;
                                 return Err((LayoutNode::VerticalSplit { children, ratios }, err));
                             }
                         }
                     }
                 }
-                if found {
-                    Ok(LayoutNode::VerticalSplit { children, ratios })
-                } else {
-                    Ok(LayoutNode::VerticalSplit { children, ratios })
-                }
+                Ok(LayoutNode::VerticalSplit { children, ratios })
             }
         }
     }
 
     /// Calculate layout bounds for all panes
     pub fn calculate_layout(&mut self, total_bounds: Rect) {
-        let root = std::mem::replace(&mut self.root, LayoutNode::Pane(create_placeholder_pane()));
+        let root = std::mem::replace(
+            &mut self.root,
+            LayoutNode::Pane(Box::new(create_placeholder_pane())),
+        );
         let new_root = self.calculate_node_layout_owned(root, total_bounds);
         self.root = new_root;
     }
@@ -470,7 +476,10 @@ impl LayoutTree {
         let focused_id = self.focused_pane;
 
         // Take the old root and replace with placeholder
-        let old_root = std::mem::replace(&mut self.root, LayoutNode::Pane(create_placeholder_pane()));
+        let old_root = std::mem::replace(
+            &mut self.root,
+            LayoutNode::Pane(Box::new(create_placeholder_pane())),
+        );
 
         match close_pane_in_node(old_root, focused_id) {
             Ok(new_root) => {
@@ -503,11 +512,15 @@ impl LayoutTree {
     ///
     /// # Returns
     /// Ok(()) if resize was successful, Err if resize not possible
+    #[allow(dead_code)]
     pub fn resize_focused(&mut self, direction: SplitDirection, delta: f32) -> Result<(), String> {
         let focused_id = self.focused_pane;
 
         // Take the old root and replace with placeholder
-        let old_root = std::mem::replace(&mut self.root, LayoutNode::Pane(create_placeholder_pane()));
+        let old_root = std::mem::replace(
+            &mut self.root,
+            LayoutNode::Pane(Box::new(create_placeholder_pane())),
+        );
 
         match resize_pane_in_node(old_root, focused_id, direction, delta) {
             Ok(new_root) => {
@@ -533,7 +546,10 @@ fn close_pane_in_node(node: LayoutNode, pane_id: Uuid) -> Result<LayoutNode, Str
             // Not the target pane
             Ok(LayoutNode::Pane(pane))
         }
-        LayoutNode::HorizontalSplit { mut children, mut ratios } => {
+        LayoutNode::HorizontalSplit {
+            mut children,
+            mut ratios,
+        } => {
             // Try to remove the pane from children
             let mut found_idx = None;
             for (i, child) in children.iter().enumerate() {
@@ -566,7 +582,10 @@ fn close_pane_in_node(node: LayoutNode, pane_id: Uuid) -> Result<LayoutNode, Str
                 Ok(LayoutNode::HorizontalSplit { children, ratios })
             }
         }
-        LayoutNode::VerticalSplit { mut children, mut ratios } => {
+        LayoutNode::VerticalSplit {
+            mut children,
+            mut ratios,
+        } => {
             // Try to remove the pane from children
             let mut found_idx = None;
             for (i, child) in children.iter().enumerate() {
@@ -603,6 +622,7 @@ fn close_pane_in_node(node: LayoutNode, pane_id: Uuid) -> Result<LayoutNode, Str
 }
 
 /// Recursively resize a pane in a node (standalone function to avoid borrow issues)
+#[allow(dead_code)]
 fn resize_pane_in_node(
     node: LayoutNode,
     pane_id: Uuid,
@@ -612,9 +632,15 @@ fn resize_pane_in_node(
     match node {
         LayoutNode::Pane(pane) => {
             // Single pane cannot be resized
-            Err((LayoutNode::Pane(pane), "Cannot resize: no adjacent pane".to_string()))
+            Err((
+                LayoutNode::Pane(pane),
+                "Cannot resize: no adjacent pane".to_string(),
+            ))
         }
-        LayoutNode::HorizontalSplit { children, mut ratios } => {
+        LayoutNode::HorizontalSplit {
+            children,
+            mut ratios,
+        } => {
             // Only resize if direction matches
             if direction == SplitDirection::Horizontal {
                 // Find which child contains the pane
@@ -623,12 +649,12 @@ fn resize_pane_in_node(
                         // Found the pane, adjust ratios
                         // If pane is in child i, we adjust ratios[i] and ratios[i+1] or ratios[i-1]
                         // For simplicity, we adjust the pane's ratio up/down
-                        
+
                         if i < ratios.len() {
                             let new_ratio = (ratios[i] + delta).clamp(0.1, 0.9);
                             let diff = new_ratio - ratios[i];
                             ratios[i] = new_ratio;
-                            
+
                             // Adjust adjacent pane(s) to maintain total of 1.0
                             if i + 1 < ratios.len() {
                                 ratios[i + 1] -= diff;
@@ -637,7 +663,7 @@ fn resize_pane_in_node(
                                 ratios[i - 1] -= diff;
                                 ratios[i - 1] = ratios[i - 1].clamp(0.1, 0.9);
                             }
-                            
+
                             // Normalize to ensure total is 1.0
                             let total: f32 = ratios.iter().sum();
                             if total > 0.0 {
@@ -646,7 +672,7 @@ fn resize_pane_in_node(
                                 }
                             }
                         }
-                        
+
                         // Recurse into children to find the actual pane
                         let mut new_children = Vec::with_capacity(children.len());
                         for child in children.into_iter() {
@@ -656,7 +682,7 @@ fn resize_pane_in_node(
                                 Err((c, _)) => new_children.push(Box::new(c)),
                             }
                         }
-                        
+
                         return Ok(LayoutNode::HorizontalSplit {
                             children: new_children,
                             ratios,
@@ -664,7 +690,7 @@ fn resize_pane_in_node(
                     }
                 }
             }
-            
+
             // Direction doesn't match or pane not found, just recurse
             let mut new_children = Vec::with_capacity(children.len());
             for child in children.into_iter() {
@@ -674,13 +700,16 @@ fn resize_pane_in_node(
                     Err((c, _)) => new_children.push(Box::new(c)),
                 }
             }
-            
+
             Ok(LayoutNode::HorizontalSplit {
                 children: new_children,
                 ratios,
             })
         }
-        LayoutNode::VerticalSplit { children, mut ratios } => {
+        LayoutNode::VerticalSplit {
+            children,
+            mut ratios,
+        } => {
             // Only resize if direction matches
             if direction == SplitDirection::Vertical {
                 // Find which child contains the pane
@@ -691,7 +720,7 @@ fn resize_pane_in_node(
                             let new_ratio = (ratios[i] + delta).clamp(0.1, 0.9);
                             let diff = new_ratio - ratios[i];
                             ratios[i] = new_ratio;
-                            
+
                             // Adjust adjacent pane(s)
                             if i + 1 < ratios.len() {
                                 ratios[i + 1] -= diff;
@@ -700,7 +729,7 @@ fn resize_pane_in_node(
                                 ratios[i - 1] -= diff;
                                 ratios[i - 1] = ratios[i - 1].clamp(0.1, 0.9);
                             }
-                            
+
                             // Normalize
                             let total: f32 = ratios.iter().sum();
                             if total > 0.0 {
@@ -709,7 +738,7 @@ fn resize_pane_in_node(
                                 }
                             }
                         }
-                        
+
                         // Recurse into children
                         let mut new_children = Vec::with_capacity(children.len());
                         for child in children.into_iter() {
@@ -719,7 +748,7 @@ fn resize_pane_in_node(
                                 Err((c, _)) => new_children.push(Box::new(c)),
                             }
                         }
-                        
+
                         return Ok(LayoutNode::VerticalSplit {
                             children: new_children,
                             ratios,
@@ -727,7 +756,7 @@ fn resize_pane_in_node(
                     }
                 }
             }
-            
+
             // Direction doesn't match or pane not found, just recurse
             let mut new_children = Vec::with_capacity(children.len());
             for child in children.into_iter() {
@@ -737,7 +766,7 @@ fn resize_pane_in_node(
                     Err((c, _)) => new_children.push(Box::new(c)),
                 }
             }
-            
+
             Ok(LayoutNode::VerticalSplit {
                 children: new_children,
                 ratios,
@@ -781,12 +810,6 @@ mod tests {
         Pane::new(pty, 80, 24, Rect::new(0, 0, 800, 600))
     }
 
-    // Helper function for placeholder panes (used in split logic)
-    fn create_placeholder_pane() -> Pane {
-        let pty = PtySession::spawn(PtyConfig::default()).unwrap();
-        Pane::new(pty, 1, 1, Rect::new(0, 0, 1, 1))
-    }
-
     #[test]
     fn test_rect_creation() {
         let rect = Rect::new(10, 20, 100, 200);
@@ -825,7 +848,7 @@ mod tests {
         let pane = create_test_pane();
         let pane_id = pane.id;
         let tree = LayoutTree::new(pane);
-        
+
         assert_eq!(tree.focused_pane_id(), pane_id);
         assert_eq!(tree.pane_count(), 1);
     }
@@ -834,8 +857,8 @@ mod tests {
     fn test_layout_tree_focused_pane() {
         let pane = create_test_pane();
         let pane_id = pane.id;
-        let mut tree = LayoutTree::new(pane);
-        
+        let tree = LayoutTree::new(pane);
+
         let focused = tree.focused_pane();
         assert!(focused.is_some());
         assert_eq!(focused.unwrap().id, pane_id);
@@ -845,15 +868,15 @@ mod tests {
     fn test_layout_node_pane_count() {
         let pane1 = create_test_pane();
         let pane2 = create_test_pane();
-        
+
         let node = LayoutNode::HorizontalSplit {
             children: vec![
-                Box::new(LayoutNode::Pane(pane1)),
-                Box::new(LayoutNode::Pane(pane2)),
+                Box::new(LayoutNode::Pane(Box::new(pane1))),
+                Box::new(LayoutNode::Pane(Box::new(pane2))),
             ],
             ratios: vec![0.5, 0.5],
         };
-        
+
         assert_eq!(node.pane_count(), 2);
     }
 
@@ -863,10 +886,11 @@ mod tests {
         let pane1_id = pane1.id;
         let pane2 = create_test_pane();
         let pane2_id = pane2.id;
-        
+
         let mut tree = LayoutTree::new(pane1);
-        tree.split_focused(SplitDirection::Horizontal, pane2).unwrap();
-        
+        tree.split_focused(SplitDirection::Horizontal, pane2)
+            .unwrap();
+
         assert_eq!(tree.pane_count(), 2);
         assert_eq!(tree.focused_pane_id(), pane2_id);
         assert!(tree.get_pane(pane1_id).is_some());
@@ -877,10 +901,10 @@ mod tests {
     fn test_layout_tree_split_vertical() {
         let pane1 = create_test_pane();
         let pane2 = create_test_pane();
-        
+
         let mut tree = LayoutTree::new(pane1);
         tree.split_focused(SplitDirection::Vertical, pane2).unwrap();
-        
+
         assert_eq!(tree.pane_count(), 2);
         assert_eq!(tree.root().pane_count(), 2);
     }
@@ -893,23 +917,24 @@ mod tests {
         let pane2_id = pane2.id;
         let pane3 = create_test_pane();
         let pane3_id = pane3.id;
-        
+
         let mut tree = LayoutTree::new(pane1);
-        tree.split_focused(SplitDirection::Horizontal, pane2).unwrap();
+        tree.split_focused(SplitDirection::Horizontal, pane2)
+            .unwrap();
         tree.set_focus(pane1_id);
         tree.split_focused(SplitDirection::Vertical, pane3).unwrap();
-        
+
         // Test focus_next
         tree.set_focus(pane1_id);
         tree.focus_next();
         assert_eq!(tree.focused_pane_id(), pane3_id);
-        
+
         tree.focus_next();
         assert_eq!(tree.focused_pane_id(), pane2_id);
-        
+
         tree.focus_next();
         assert_eq!(tree.focused_pane_id(), pane1_id);
-        
+
         // Test focus_prev
         tree.focus_prev();
         assert_eq!(tree.focused_pane_id(), pane2_id);
@@ -919,13 +944,14 @@ mod tests {
     fn test_layout_tree_calculate_layout() {
         let pane1 = create_test_pane();
         let pane2 = create_test_pane();
-        
+
         let mut tree = LayoutTree::new(pane1);
-        tree.split_focused(SplitDirection::Horizontal, pane2).unwrap();
-        
+        tree.split_focused(SplitDirection::Horizontal, pane2)
+            .unwrap();
+
         let total_bounds = Rect::new(0, 0, 1000, 800);
         tree.calculate_layout(total_bounds);
-        
+
         // Check that panes have bounds set
         let pane_ids = tree.all_pane_ids();
         for id in pane_ids {
@@ -939,15 +965,16 @@ mod tests {
     fn test_layout_tree_max_panes() {
         let pane1 = create_test_pane();
         let mut tree = LayoutTree::new(pane1);
-        
+
         // Add 7 more panes (total 8)
         for _ in 0..7 {
             let new_pane = create_test_pane();
-            tree.split_focused(SplitDirection::Horizontal, new_pane).unwrap();
+            tree.split_focused(SplitDirection::Horizontal, new_pane)
+                .unwrap();
         }
-        
+
         assert_eq!(tree.pane_count(), 8);
-        
+
         // Try to add 9th pane (should fail)
         let pane9 = create_test_pane();
         let result = tree.split_focused(SplitDirection::Horizontal, pane9);
@@ -961,15 +988,15 @@ mod tests {
         let pane1_id = pane1.id;
         let pane2 = create_test_pane();
         let pane2_id = pane2.id;
-        
+
         let node = LayoutNode::HorizontalSplit {
             children: vec![
-                Box::new(LayoutNode::Pane(pane1)),
-                Box::new(LayoutNode::Pane(pane2)),
+                Box::new(LayoutNode::Pane(Box::new(pane1))),
+                Box::new(LayoutNode::Pane(Box::new(pane2))),
             ],
             ratios: vec![0.5, 0.5],
         };
-        
+
         assert!(node.find_pane(pane1_id).is_some());
         assert!(node.find_pane(pane2_id).is_some());
         assert!(node.find_pane(Uuid::new_v4()).is_none());
@@ -981,15 +1008,15 @@ mod tests {
         let pane1_id = pane1.id;
         let pane2 = create_test_pane();
         let pane2_id = pane2.id;
-        
+
         let node = LayoutNode::HorizontalSplit {
             children: vec![
-                Box::new(LayoutNode::Pane(pane1)),
-                Box::new(LayoutNode::Pane(pane2)),
+                Box::new(LayoutNode::Pane(Box::new(pane1))),
+                Box::new(LayoutNode::Pane(Box::new(pane2))),
             ],
             ratios: vec![0.5, 0.5],
         };
-        
+
         let ids = node.collect_pane_ids();
         assert_eq!(ids.len(), 2);
         assert!(ids.contains(&pane1_id));

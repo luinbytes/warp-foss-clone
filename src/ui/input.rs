@@ -562,8 +562,8 @@ mod tests {
         state.ctrl = true;
 
         let copied = state; // Copy trait
-        assert_eq!(copied.shift, true);
-        assert_eq!(copied.ctrl, true);
+        assert!(copied.shift);
+        assert!(copied.ctrl);
     }
 
     // ========================================
@@ -638,11 +638,11 @@ mod tests {
     fn test_ctrl_char_special_characters() {
         let handler = InputHandler::new();
 
-        assert_eq!(handler.ctrl_char('['), Some('\x1b'));  // ESC
+        assert_eq!(handler.ctrl_char('['), Some('\x1b')); // ESC
         assert_eq!(handler.ctrl_char('\\'), Some('\x1c')); // FS
-        assert_eq!(handler.ctrl_char(']'), Some('\x1d'));  // GS
-        assert_eq!(handler.ctrl_char('^'), Some('\x1e'));  // RS
-        assert_eq!(handler.ctrl_char('_'), Some('\x1f'));  // US
+        assert_eq!(handler.ctrl_char(']'), Some('\x1d')); // GS
+        assert_eq!(handler.ctrl_char('^'), Some('\x1e')); // RS
+        assert_eq!(handler.ctrl_char('_'), Some('\x1f')); // US
     }
 
     #[test]
@@ -664,20 +664,56 @@ mod tests {
         let handler = InputHandler::new();
 
         // F1-F4 use SS3 sequences
-        assert_eq!(handler.f_key(1), TerminalInput::Escape("\x1bOP".to_string()));
-        assert_eq!(handler.f_key(2), TerminalInput::Escape("\x1bOQ".to_string()));
-        assert_eq!(handler.f_key(3), TerminalInput::Escape("\x1bOR".to_string()));
-        assert_eq!(handler.f_key(4), TerminalInput::Escape("\x1bOS".to_string()));
+        assert_eq!(
+            handler.f_key(1),
+            TerminalInput::Escape("\x1bOP".to_string())
+        );
+        assert_eq!(
+            handler.f_key(2),
+            TerminalInput::Escape("\x1bOQ".to_string())
+        );
+        assert_eq!(
+            handler.f_key(3),
+            TerminalInput::Escape("\x1bOR".to_string())
+        );
+        assert_eq!(
+            handler.f_key(4),
+            TerminalInput::Escape("\x1bOS".to_string())
+        );
 
         // F5-F12 use CSI sequences
-        assert_eq!(handler.f_key(5), TerminalInput::Escape("\x1b[15~".to_string()));
-        assert_eq!(handler.f_key(6), TerminalInput::Escape("\x1b[17~".to_string()));
-        assert_eq!(handler.f_key(7), TerminalInput::Escape("\x1b[18~".to_string()));
-        assert_eq!(handler.f_key(8), TerminalInput::Escape("\x1b[19~".to_string()));
-        assert_eq!(handler.f_key(9), TerminalInput::Escape("\x1b[20~".to_string()));
-        assert_eq!(handler.f_key(10), TerminalInput::Escape("\x1b[21~".to_string()));
-        assert_eq!(handler.f_key(11), TerminalInput::Escape("\x1b[23~".to_string()));
-        assert_eq!(handler.f_key(12), TerminalInput::Escape("\x1b[24~".to_string()));
+        assert_eq!(
+            handler.f_key(5),
+            TerminalInput::Escape("\x1b[15~".to_string())
+        );
+        assert_eq!(
+            handler.f_key(6),
+            TerminalInput::Escape("\x1b[17~".to_string())
+        );
+        assert_eq!(
+            handler.f_key(7),
+            TerminalInput::Escape("\x1b[18~".to_string())
+        );
+        assert_eq!(
+            handler.f_key(8),
+            TerminalInput::Escape("\x1b[19~".to_string())
+        );
+        assert_eq!(
+            handler.f_key(9),
+            TerminalInput::Escape("\x1b[20~".to_string())
+        );
+        assert_eq!(
+            handler.f_key(10),
+            TerminalInput::Escape("\x1b[21~".to_string())
+        );
+        assert_eq!(
+            handler.f_key(11),
+            TerminalInput::Escape("\x1b[23~".to_string())
+        );
+        assert_eq!(
+            handler.f_key(12),
+            TerminalInput::Escape("\x1b[24~".to_string())
+        );
     }
 
     #[test]
@@ -686,8 +722,14 @@ mod tests {
         handler.modifiers_mut().shift = true;
 
         // Shift modifier adds ";2" prefix
-        assert_eq!(handler.f_key(1), TerminalInput::Escape("\x1b[1;2P".to_string()));
-        assert_eq!(handler.f_key(5), TerminalInput::Escape("\x1b[15;2~".to_string()));
+        assert_eq!(
+            handler.f_key(1),
+            TerminalInput::Escape("\x1b[1;2P".to_string())
+        );
+        assert_eq!(
+            handler.f_key(5),
+            TerminalInput::Escape("\x1b[15;2~".to_string())
+        );
     }
 
     #[test]
@@ -696,8 +738,14 @@ mod tests {
         handler.modifiers_mut().alt = true;
 
         // Alt modifier = 2, so modifier+1 = 3
-        assert_eq!(handler.f_key(1), TerminalInput::Escape("\x1b[1;3P".to_string()));
-        assert_eq!(handler.f_key(12), TerminalInput::Escape("\x1b[24;3~".to_string()));
+        assert_eq!(
+            handler.f_key(1),
+            TerminalInput::Escape("\x1b[1;3P".to_string())
+        );
+        assert_eq!(
+            handler.f_key(12),
+            TerminalInput::Escape("\x1b[24;3~".to_string())
+        );
     }
 
     #[test]
@@ -706,8 +754,14 @@ mod tests {
         handler.modifiers_mut().ctrl = true;
 
         // Ctrl modifier = 4, so modifier+1 = 5
-        assert_eq!(handler.f_key(1), TerminalInput::Escape("\x1b[1;5P".to_string()));
-        assert_eq!(handler.f_key(5), TerminalInput::Escape("\x1b[15;5~".to_string()));
+        assert_eq!(
+            handler.f_key(1),
+            TerminalInput::Escape("\x1b[1;5P".to_string())
+        );
+        assert_eq!(
+            handler.f_key(5),
+            TerminalInput::Escape("\x1b[15;5~".to_string())
+        );
     }
 
     #[test]

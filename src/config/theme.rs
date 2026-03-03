@@ -37,7 +37,7 @@ impl Color {
     }
 
     /// Convert to hex string
-    pub fn to_hex(&self) -> String {
+    pub fn to_hex(self) -> String {
         format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
     }
 }

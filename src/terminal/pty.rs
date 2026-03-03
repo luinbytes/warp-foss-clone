@@ -6,8 +6,8 @@
 
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -317,7 +317,7 @@ impl PtySession {
                 .try_clone_reader()
                 .map_err(|e| PtyError::CreationFailed(e.to_string()))?,
         );
-        
+
         let reader = Arc::new(Mutex::new(reader));
 
         // Running flag for async reader thread
@@ -361,7 +361,7 @@ impl PtySession {
                     }
                 }
             });
-            
+
             Some(PtyAsyncReader {
                 rx,
                 thread: Some(thread),
@@ -412,28 +412,25 @@ impl PtySession {
             .map_err(|_| PtyError::ReadError("Reader lock poisoned".to_string()))?;
         reader.read(buf)
     }
-    
+
     /// Read data asynchronously using background thread (Windows-compatible)
     /// Returns available data from the channel, or empty vec if none available
     pub fn read_async(&self) -> Vec<u8> {
         if let Some(ref async_reader) = self.async_reader {
             let mut all_data = Vec::new();
             // Drain all available data from channel
-            loop {
-                match async_reader.try_recv() {
-                    Ok(data) => all_data.extend(data),
-                    Err(_) => break,
-                }
+            while let Ok(data) = async_reader.try_recv() {
+                all_data.extend(data);
             }
             all_data
         } else {
             Vec::new()
         }
     }
-    
+
     /// Check if async reader has data available
     pub fn has_async_data(&self) -> bool {
-        self.async_reader.as_ref().map_or(false, |r| r.has_data())
+        self.async_reader.as_ref().is_some_and(|r| r.has_data())
     }
 
     /// Resize the PTY to new dimensions
@@ -499,9 +496,7 @@ impl Drop for PtySession {
             if let Some(pid) = self.child.process_id() {
                 // Send SIGTERM to the process
                 // Using kill -pid to kill the process group
-                let _ = unsafe {
-                    libc::kill(-(pid as i32), libc::SIGTERM)
-                };
+                let _ = unsafe { libc::kill(-(pid as i32), libc::SIGTERM) };
             }
         }
 

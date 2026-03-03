@@ -88,8 +88,8 @@ impl PluginManager {
 
     /// Load a plugin from a WASM file
     pub fn load_plugin(&self, path: &Path) -> Result<String> {
-        let wasm_bytes = std::fs::read(path)
-            .with_context(|| format!("Failed to read WASM file: {:?}", path))?;
+        let wasm_bytes =
+            std::fs::read(path).with_context(|| format!("Failed to read WASM file: {:?}", path))?;
 
         self.load_plugin_from_bytes(&wasm_bytes)
     }
@@ -97,22 +97,23 @@ impl PluginManager {
     /// Load a plugin from WASM bytes
     pub fn load_plugin_from_bytes(&self, wasm_bytes: &[u8]) -> Result<String> {
         // Compile module
-        let module = Module::new(&self.engine, wasm_bytes)
-            .context("Failed to compile WASM module")?;
+        let module =
+            Module::new(&self.engine, wasm_bytes).context("Failed to compile WASM module")?;
 
         // Create sandboxed WASI context (no filesystem, network, or env access)
-        let wasi = WasiCtxBuilder::new()
-            .inherit_stdio()
-            .build();
+        let wasi = WasiCtxBuilder::new().inherit_stdio().build();
 
-        let mut store = Store::new(&self.engine, PluginState {
-            wasi,
-            table: ResourceTable::new(),
-        });
+        let mut store = Store::new(
+            &self.engine,
+            PluginState {
+                wasi,
+                table: ResourceTable::new(),
+            },
+        );
 
         // Create instance with no imports (fully sandboxed)
-        let instance = Instance::new(&mut store, &module, &[])
-            .context("Failed to instantiate WASM module")?;
+        let instance =
+            Instance::new(&mut store, &module, &[]).context("Failed to instantiate WASM module")?;
 
         // Get memory for data exchange
         let memory = instance
@@ -120,8 +121,12 @@ impl PluginManager {
             .ok_or_else(|| anyhow!("WASM module must export 'memory'"))?;
 
         // Get optional hook functions
-        let on_input = instance.get_typed_func::<(i32, i32), i32>(&mut store, "on_input").ok();
-        let on_output = instance.get_typed_func::<(i32, i32), i32>(&mut store, "on_output").ok();
+        let on_input = instance
+            .get_typed_func::<(i32, i32), i32>(&mut store, "on_input")
+            .ok();
+        let on_output = instance
+            .get_typed_func::<(i32, i32), i32>(&mut store, "on_output")
+            .ok();
 
         // Get metadata from exports
         let metadata = self.extract_metadata(&mut store, &instance)?;
@@ -144,18 +149,29 @@ impl PluginManager {
     }
 
     /// Extract plugin metadata from WASM exports
-    fn extract_metadata(&self, store: &mut Store<PluginState>, instance: &Instance) -> Result<PluginMetadata> {
-        let id = self.get_string_export(store, instance, "plugin_id")
+    fn extract_metadata(
+        &self,
+        store: &mut Store<PluginState>,
+        instance: &Instance,
+    ) -> Result<PluginMetadata> {
+        let id = self
+            .get_string_export(store, instance, "plugin_id")
             .unwrap_or_else(|_| format!("plugin-{}", uuid::Uuid::new_v4()));
 
-        let name = self.get_string_export(store, instance, "plugin_name")
+        let name = self
+            .get_string_export(store, instance, "plugin_name")
             .unwrap_or_else(|_| "Unknown Plugin".to_string());
 
-        let version = self.get_string_export(store, instance, "plugin_version")
+        let version = self
+            .get_string_export(store, instance, "plugin_version")
             .unwrap_or_else(|_| "0.1.0".to_string());
 
-        let author = self.get_string_export(store, instance, "plugin_author").ok();
-        let description = self.get_string_export(store, instance, "plugin_description").ok();
+        let author = self
+            .get_string_export(store, instance, "plugin_author")
+            .ok();
+        let description = self
+            .get_string_export(store, instance, "plugin_description")
+            .ok();
 
         Ok(PluginMetadata {
             id,
@@ -249,7 +265,9 @@ impl PluginManager {
     /// Get plugin metadata
     pub fn get_plugin_metadata(&self, id: &str) -> Result<PluginMetadata> {
         let plugins = self.plugins.borrow();
-        let plugin = plugins.get(id).ok_or_else(|| anyhow!("Plugin not found: {}", id))?;
+        let plugin = plugins
+            .get(id)
+            .ok_or_else(|| anyhow!("Plugin not found: {}", id))?;
         Ok(plugin.metadata.clone())
     }
 
@@ -382,15 +400,18 @@ impl ThreadSafePluginManager {
 
     /// Load plugin from bytes (stores module for later instantiation)
     pub fn load_plugin_from_bytes(&self, wasm_bytes: &[u8]) -> Result<String> {
-        let module = Module::new(&self.engine, wasm_bytes)
-            .context("Failed to compile WASM module")?;
+        let module =
+            Module::new(&self.engine, wasm_bytes).context("Failed to compile WASM module")?;
 
         // Extract metadata by creating a temporary instance
         let wasi = WasiCtxBuilder::new().inherit_stdio().build();
-        let mut store = Store::new(&self.engine, PluginState {
-            wasi,
-            table: ResourceTable::new(),
-        });
+        let mut store = Store::new(
+            &self.engine,
+            PluginState {
+                wasi,
+                table: ResourceTable::new(),
+            },
+        );
 
         let instance = Instance::new(&mut store, &module, &[])?;
         let memory_export = instance
@@ -416,7 +437,9 @@ impl ThreadSafePluginManager {
             memory_export: "memory".to_string(),
         };
 
-        self.plugins.write().map_err(|e| anyhow!("Lock error: {}", e))?
+        self.plugins
+            .write()
+            .map_err(|e| anyhow!("Lock error: {}", e))?
             .insert(plugin_id.clone(), plugin);
 
         Ok(plugin_id)
@@ -450,10 +473,8 @@ impl ThreadSafePluginManager {
 
         let id = get_string(store, "plugin_id")
             .unwrap_or_else(|| format!("plugin-{}", uuid::Uuid::new_v4()));
-        let name = get_string(store, "plugin_name")
-            .unwrap_or_else(|| "Unknown Plugin".to_string());
-        let version = get_string(store, "plugin_version")
-            .unwrap_or_else(|| "0.1.0".to_string());
+        let name = get_string(store, "plugin_name").unwrap_or_else(|| "Unknown Plugin".to_string());
+        let version = get_string(store, "plugin_version").unwrap_or_else(|| "0.1.0".to_string());
         let author = get_string(store, "plugin_author");
         let description = get_string(store, "plugin_description");
 
@@ -467,26 +488,41 @@ impl ThreadSafePluginManager {
     }
 
     pub fn list_plugins(&self) -> Result<Vec<String>> {
-        Ok(self.plugins.read().map_err(|e| anyhow!("Lock error: {}", e))?
-            .keys().cloned().collect())
+        Ok(self
+            .plugins
+            .read()
+            .map_err(|e| anyhow!("Lock error: {}", e))?
+            .keys()
+            .cloned()
+            .collect())
     }
 
     pub fn unload_plugin(&self, id: &str) -> Result<()> {
-        self.plugins.write().map_err(|e| anyhow!("Lock error: {}", e))?
+        self.plugins
+            .write()
+            .map_err(|e| anyhow!("Lock error: {}", e))?
             .remove(id)
             .ok_or_else(|| anyhow!("Plugin not found: {}", id))?;
         Ok(())
     }
 
     pub fn get_plugin_metadata(&self, id: &str) -> Result<PluginMetadata> {
-        let plugins = self.plugins.read().map_err(|e| anyhow!("Lock error: {}", e))?;
-        let plugin = plugins.get(id).ok_or_else(|| anyhow!("Plugin not found: {}", id))?;
+        let plugins = self
+            .plugins
+            .read()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
+        let plugin = plugins
+            .get(id)
+            .ok_or_else(|| anyhow!("Plugin not found: {}", id))?;
         Ok(plugin.metadata.clone())
     }
 
     /// Execute on_input on a plugin (creates new instance per call for thread safety)
     pub fn on_input(&self, data: &[u8], _ctx: &PluginContext) -> Result<HookResult> {
-        let plugins = self.plugins.read().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let plugins = self
+            .plugins
+            .read()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
         let mut result = HookResult::default();
 
         for plugin in plugins.values() {
@@ -506,7 +542,10 @@ impl ThreadSafePluginManager {
 
     /// Execute on_output on a plugin (creates new instance per call for thread safety)
     pub fn on_output(&self, data: &[u8], _ctx: &PluginContext) -> Result<HookResult> {
-        let plugins = self.plugins.read().map_err(|e| anyhow!("Lock error: {}", e))?;
+        let plugins = self
+            .plugins
+            .read()
+            .map_err(|e| anyhow!("Lock error: {}", e))?;
         let mut result = HookResult::default();
 
         for plugin in plugins.values() {
@@ -527,10 +566,13 @@ impl ThreadSafePluginManager {
     fn execute_hook(&self, plugin: &ThreadSafePlugin, data: &[u8]) -> Result<HookResult> {
         // Create fresh instance for this execution
         let wasi = WasiCtxBuilder::new().inherit_stdio().build();
-        let mut store = Store::new(&self.engine, PluginState {
-            wasi,
-            table: ResourceTable::new(),
-        });
+        let mut store = Store::new(
+            &self.engine,
+            PluginState {
+                wasi,
+                table: ResourceTable::new(),
+            },
+        );
 
         let instance = Instance::new(&mut store, &plugin.module, &[])?;
         let memory = instance
@@ -538,7 +580,8 @@ impl ThreadSafePluginManager {
             .ok_or_else(|| anyhow!("Memory not found"))?;
 
         // Get hook function (try both on_input and on_output)
-        let func = instance.get_func(&mut store, "on_input")
+        let func = instance
+            .get_func(&mut store, "on_input")
             .or_else(|| instance.get_func(&mut store, "on_output"))
             .ok_or_else(|| anyhow!("No hook function found"))?;
 
@@ -634,8 +677,12 @@ mod tests {
         let wasm = wat::parse_str(wat).expect("Failed to parse WAT");
         let manager = PluginManager::new();
 
-        let id = manager.load_plugin_from_bytes(&wasm).expect("Failed to load plugin");
-        let metadata = manager.get_plugin_metadata(&id).expect("Failed to get metadata");
+        let id = manager
+            .load_plugin_from_bytes(&wasm)
+            .expect("Failed to load plugin");
+        let metadata = manager
+            .get_plugin_metadata(&id)
+            .expect("Failed to get metadata");
 
         assert_eq!(metadata.id, "meta-plugin");
         assert_eq!(metadata.name, "Metadata Plugin");
@@ -658,7 +705,9 @@ mod tests {
         let wasm = wat::parse_str(wat).expect("Failed to parse WAT");
         let manager = PluginManager::new();
 
-        let id = manager.load_plugin_from_bytes(&wasm).expect("Failed to load plugin");
+        let id = manager
+            .load_plugin_from_bytes(&wasm)
+            .expect("Failed to load plugin");
         assert_eq!(manager.list_plugins().unwrap().len(), 1);
 
         manager.unload_plugin(&id).expect("Failed to unload");
@@ -685,7 +734,11 @@ mod tests {
         let manager = PluginManager::new();
 
         let result = manager.load_plugin_from_bytes(&wasm);
-        assert!(result.is_ok(), "Sandboxed plugin should load: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Sandboxed plugin should load: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -710,8 +763,12 @@ mod tests {
         let wasm2 = wat::parse_str(wat2).expect("Failed to parse WAT");
         let manager = PluginManager::new();
 
-        let id1 = manager.load_plugin_from_bytes(&wasm1).expect("Failed to load plugin 1");
-        let id2 = manager.load_plugin_from_bytes(&wasm2).expect("Failed to load plugin 2");
+        let id1 = manager
+            .load_plugin_from_bytes(&wasm1)
+            .expect("Failed to load plugin 1");
+        let id2 = manager
+            .load_plugin_from_bytes(&wasm2)
+            .expect("Failed to load plugin 2");
 
         let plugins = manager.list_plugins().unwrap();
         assert_eq!(plugins.len(), 2);
@@ -760,7 +817,9 @@ mod tests {
         let wasm = wat::parse_str(wat).expect("Failed to parse WAT");
         let manager = PluginManager::new();
 
-        let _id = manager.load_plugin_from_bytes(&wasm).expect("Failed to load plugin");
+        let _id = manager
+            .load_plugin_from_bytes(&wasm)
+            .expect("Failed to load plugin");
 
         let ctx = PluginContext {
             cwd: Some("/test".to_string()),
@@ -787,7 +846,9 @@ mod tests {
 "#;
 
         let wasm = wat::parse_str(wat).expect("Failed to parse WAT");
-        let id = manager.load_plugin_from_bytes(&wasm).expect("Failed to load");
+        let id = manager
+            .load_plugin_from_bytes(&wasm)
+            .expect("Failed to load");
 
         assert!(manager.list_plugins().unwrap().contains(&id));
         manager.unload_plugin(&id).expect("Failed to unload");

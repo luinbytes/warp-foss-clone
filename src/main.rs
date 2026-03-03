@@ -18,11 +18,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use config::{Config, Action, KeyCombo, Modifier};
+use config::{Action, Config, KeyCombo, Modifier};
+use search::SearchState;
 use terminal::pty::{PtyConfig, PtySession};
 use ui::ai_command_palette::AICommandPalette;
 use ui::input::InputHandler;
-use search::SearchState;
 use ui::layout::{LayoutTree, Pane, Rect, SplitDirection};
 use ui::selection::{extract_selected_text, Clipboard, SelectionState};
 use ui::status_bar::StatusBar;
@@ -34,7 +34,6 @@ use winit::{
     keyboard::{Key, ModifiersState, NamedKey},
     window::{Window, WindowId},
 };
-
 
 /// Main application state
 struct TerminalApp {
@@ -86,11 +85,15 @@ struct RendererHolder {
 }
 
 impl RendererHolder {
+    #[allow(dead_code)]
     async fn new(window: Arc<Window>) -> Result<Self, ui::renderer::RendererError> {
         Self::new_with_config(window, 16.0).await
     }
 
-    async fn new_with_config(window: Arc<Window>, font_size: f32) -> Result<Self, ui::renderer::RendererError> {
+    async fn new_with_config(
+        window: Arc<Window>,
+        font_size: f32,
+    ) -> Result<Self, ui::renderer::RendererError> {
         use ui::renderer::RendererError;
 
         // Create instance - prefer DX12 on Windows for better cross-compile compatibility
@@ -166,7 +169,7 @@ impl RendererHolder {
         // Create text renderer with config font size
         let window_size = (size.width, size.height);
         let mut text_renderer = ui::text::TextRenderer::new(&device, font_size, window_size)?;
-        
+
         // Initialize the render pipeline (creates bind_group_layout)
         text_renderer.init_pipeline(&device, surface_format);
 
@@ -198,13 +201,10 @@ impl RendererHolder {
 
         tracing::debug!("RendererHolder::render() - getting texture");
 
-        let output = self
-            .surface
-            .get_current_texture()
-            .map_err(|e| {
-                tracing::error!("Failed to get current texture: {}", e);
-                RendererError::TextureAcquisition(e.to_string())
-            })?;
+        let output = self.surface.get_current_texture().map_err(|e| {
+            tracing::error!("Failed to get current texture: {}", e);
+            RendererError::TextureAcquisition(e.to_string())
+        })?;
 
         let view = output
             .texture
@@ -224,7 +224,7 @@ impl RendererHolder {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.0,  // Pure black background
+                            r: 0.0, // Pure black background
                             g: 0.0,
                             b: 0.0,
                             a: 1.0,
@@ -253,6 +253,7 @@ impl RendererHolder {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_layout(
         &mut self,
         layout: &LayoutTree,
@@ -269,7 +270,15 @@ impl RendererHolder {
         self.text_renderer.clear();
 
         // Render all panes in the layout
-        self.render_node(layout.root(), cell_width, cell_height, focused_pane_id, search_state, search_input, padding)?;
+        self.render_node(
+            layout.root(),
+            cell_width,
+            cell_height,
+            focused_pane_id,
+            search_state,
+            search_input,
+            padding,
+        )?;
 
         // Render AI palette overlay if visible
         if ai_palette.is_visible() {
@@ -288,6 +297,7 @@ impl RendererHolder {
         self.render()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_node(
         &mut self,
         node: &ui::layout::LayoutNode,
@@ -302,16 +312,40 @@ impl RendererHolder {
 
         match node {
             LayoutNode::Pane(pane) => {
-                self.render_pane(pane, cell_width, cell_height, pane.id == focused_pane_id, search_state, search_input, padding)?;
+                self.render_pane(
+                    pane,
+                    cell_width,
+                    cell_height,
+                    pane.id == focused_pane_id,
+                    search_state,
+                    search_input,
+                    padding,
+                )?;
             }
             LayoutNode::HorizontalSplit { children, .. } => {
                 for child in children {
-                    self.render_node(child, cell_width, cell_height, focused_pane_id, search_state, search_input, padding)?;
+                    self.render_node(
+                        child,
+                        cell_width,
+                        cell_height,
+                        focused_pane_id,
+                        search_state,
+                        search_input,
+                        padding,
+                    )?;
                 }
             }
             LayoutNode::VerticalSplit { children, .. } => {
                 for child in children {
-                    self.render_node(child, cell_width, cell_height, focused_pane_id, search_state, search_input, padding)?;
+                    self.render_node(
+                        child,
+                        cell_width,
+                        cell_height,
+                        focused_pane_id,
+                        search_state,
+                        search_input,
+                        padding,
+                    )?;
                 }
             }
         }
@@ -319,6 +353,7 @@ impl RendererHolder {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_pane(
         &mut self,
         pane: &Pane,
@@ -512,8 +547,12 @@ impl RendererHolder {
         let surface_width = self.config.width;
         let surface_height = self.config.height;
 
-        let palette_x = ((surface_width / cell_width).saturating_sub(palette_width as u32) / 2) as f32 * cell_width as f32;
-        let palette_y = ((surface_height / cell_height).saturating_sub(palette_height as u32) / 2) as f32 * cell_height as f32;
+        let palette_x = ((surface_width / cell_width).saturating_sub(palette_width as u32) / 2)
+            as f32
+            * cell_width as f32;
+        let palette_y = ((surface_height / cell_height).saturating_sub(palette_height as u32) / 2)
+            as f32
+            * cell_height as f32;
 
         // Colors
         let bg_color = Color::Rgb(30, 30, 40);
@@ -543,17 +582,8 @@ impl RendererHolder {
                     (' ', text_color, bg_color)
                 };
 
-                self.text_renderer.queue_char(
-                    ch,
-                    char_x,
-                    char_y,
-                    fg,
-                    bg,
-                    false,
-                    false,
-                    false,
-                    false,
-                )?;
+                self.text_renderer
+                    .queue_char(ch, char_x, char_y, fg, bg, false, false, false, false)?;
             }
         }
 
@@ -988,7 +1018,7 @@ impl RendererHolder {
         // The background already separates panes
         Ok(())
     }
-        }
+}
 
 impl TerminalApp {
     fn new() -> Self {
@@ -1015,8 +1045,8 @@ impl TerminalApp {
             running: false,
             last_frame: Instant::now(),
             frame_duration: Duration::from_micros(16_667), // ~60 FPS
-            cell_width: cell_width.max(8), // Minimum 8px width
-            cell_height: cell_height.max(12), // Minimum 12px height
+            cell_width: cell_width.max(8),                 // Minimum 8px width
+            cell_height: cell_height.max(12),              // Minimum 12px height
             cursor_position: None,
             modifiers: ModifiersState::default(),
             search_state: SearchState::new(),
@@ -1040,7 +1070,12 @@ impl TerminalApp {
         };
 
         let pty = PtySession::spawn(config)?;
-        let bounds = Rect::new(0, 0, cols as u32 * self.cell_width, rows as u32 * self.cell_height);
+        let bounds = Rect::new(
+            0,
+            0,
+            cols as u32 * self.cell_width,
+            rows as u32 * self.cell_height,
+        );
 
         let mut pane = Pane::new(pty, cols as usize, rows as usize, bounds);
 
@@ -1222,7 +1257,7 @@ impl TerminalApp {
         if let Some(ref mut layout) = self.layout {
             // Get all pane IDs
             let pane_ids = layout.all_pane_ids();
-            
+
             // Read from each pane
             for pane_id in pane_ids {
                 if let Some(pane) = layout.get_pane_mut(pane_id) {
@@ -1250,12 +1285,12 @@ impl TerminalApp {
             }
             return;
         }
-        
+
         #[cfg(not(target_os = "windows"))]
         {
             let mut data = Vec::with_capacity(16384);
             let mut has_data = false;
-            
+
             for _ in 0..5 {
                 let read_result = {
                     if let Ok(session) = pane.pty.lock() {
@@ -1371,7 +1406,8 @@ impl TerminalApp {
             let pane_ids = layout.all_pane_ids();
             for pane_id in pane_ids {
                 if let Some(pane) = layout.get_pane_mut(pane_id) {
-                    let (new_cols, new_rows) = pane.terminal_size(self.cell_width, self.cell_height);
+                    let (new_cols, new_rows) =
+                        pane.terminal_size(self.cell_width, self.cell_height);
 
                     if new_cols > 0 && new_rows > 0 {
                         pane.grid.resize(new_cols, new_rows);
@@ -1534,7 +1570,8 @@ impl TerminalApp {
 
         // Only update selection if we're currently selecting
         if self.selection_state.selecting {
-            if let Some((_pane_id, col, row)) = self.pixel_to_pane_and_grid(position.x, position.y) {
+            if let Some((_pane_id, col, row)) = self.pixel_to_pane_and_grid(position.x, position.y)
+            {
                 use crate::terminal::grid::Cursor;
                 self.selection_state.update_selection(Cursor::new(row, col));
             }
@@ -1560,10 +1597,8 @@ impl TerminalApp {
         if self.selection_state.has_selection() {
             if let Some(ref layout) = self.layout {
                 if let Some(pane) = layout.focused_pane() {
-                    let selected_text = extract_selected_text(
-                        pane.grid.as_rows(),
-                        &self.selection_state.region,
-                    );
+                    let selected_text =
+                        extract_selected_text(pane.grid.as_rows(), &self.selection_state.region);
                     if !selected_text.is_empty() {
                         if let Err(e) = self.clipboard.copy(&selected_text) {
                             tracing::warn!("Failed to copy to clipboard: {}", e);
@@ -1599,7 +1634,8 @@ impl TerminalApp {
                     if let Some(ref mut layout) = self.layout {
                         if let Err(e) = layout.split_focused(direction, new_pane) {
                             tracing::warn!("Failed to split pane: {}", e);
-                            self.status_bar.set_error(&format!("Failed to split: {}", e));
+                            self.status_bar
+                                .set_error(&format!("Failed to split: {}", e));
                         } else {
                             // Recalculate layout
                             if let Some(ref window) = self.window {
@@ -1669,9 +1705,7 @@ impl TerminalApp {
                     // Add scrollback rows (older history first)
                     for i in 0..scrollback_len {
                         if let Some(row) = pane.grid.get_scrollback_row(i) {
-                            let line: String = row.iter()
-                                .map(|c| c.char)
-                                .collect();
+                            let line: String = row.iter().map(|c| c.char).collect();
                             rows.push((i, line));
                         }
                     }
@@ -1690,7 +1724,8 @@ impl TerminalApp {
                     }
 
                     // Update search state with matches
-                    self.search_state.find_matches(rows.iter().map(|(r, l)| (*r, l.as_str())));
+                    self.search_state
+                        .find_matches(rows.iter().map(|(r, l)| (*r, l.as_str())));
                 }
             }
         }
@@ -1729,7 +1764,7 @@ impl TerminalApp {
                         let _ = pane.grid.scroll_up_history(needed_scroll);
                     }
                 } else if pane.grid.scroll_offset() > 0 {
-                    let _ = pane.grid.scroll_to_bottom();
+                    pane.grid.scroll_to_bottom();
                 }
             }
         }
@@ -1758,6 +1793,7 @@ impl TerminalApp {
     }
 
     /// Handle pane resize (Ctrl+Shift+Arrow keys)
+    #[allow(dead_code)]
     fn handle_resize_pane(&mut self, direction: SplitDirection, delta: f32) {
         if let Some(ref mut layout) = self.layout {
             if let Err(e) = layout.resize_focused(direction, delta) {
@@ -1783,12 +1819,16 @@ impl ApplicationHandler for TerminalApp {
         let window = match event_loop.create_window(
             Window::default_attributes()
                 .with_title("Warp FOSS")
-                .with_inner_size(PhysicalSize::new(initial_width.max(800), initial_height.max(600))),
+                .with_inner_size(PhysicalSize::new(
+                    initial_width.max(800),
+                    initial_height.max(600),
+                )),
         ) {
             Ok(w) => Arc::new(w),
             Err(e) => {
                 tracing::error!("Failed to create window: {}", e);
-                self.status_bar.set_persistent_error(&format!("Failed to create window: {}", e));
+                self.status_bar
+                    .set_persistent_error(&format!("Failed to create window: {}", e));
                 event_loop.exit();
                 return;
             }
@@ -1800,10 +1840,9 @@ impl ApplicationHandler for TerminalApp {
         let rows = (size.height / self.cell_height) as u16;
 
         // Initialize renderer with config font size
-        let renderer: Option<RendererHolder> = match pollster::block_on(RendererHolder::new_with_config(
-            Arc::clone(&window),
-            self.config.font.size,
-        )) {
+        let renderer: Option<RendererHolder> = match pollster::block_on(
+            RendererHolder::new_with_config(Arc::clone(&window), self.config.font.size),
+        ) {
             Ok(r) => Some(r),
             Err(e) => {
                 let error_msg = format!("Renderer error: {}. Some features may not work.", e);
@@ -1816,22 +1855,21 @@ impl ApplicationHandler for TerminalApp {
         // Create initial pane and layout using config terminal size
         let config_cols = self.config.terminal.cols;
         let config_rows = self.config.terminal.rows;
-        let initial_pane: Option<Pane> = match self.create_initial_pane(
-            cols.max(config_cols),
-            rows.max(config_rows),
-        ) {
-            Ok(p) => Some(p),
-            Err(e) => {
-                let error_msg = Self::format_pty_error(&e);
-                tracing::error!("Failed to create initial pane: {}", e);
-                self.status_bar.set_persistent_error(&error_msg);
-                None
-            }
-        };
+        let initial_pane: Option<Pane> =
+            match self.create_initial_pane(cols.max(config_cols), rows.max(config_rows)) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    let error_msg = Self::format_pty_error(&e);
+                    tracing::error!("Failed to create initial pane: {}", e);
+                    self.status_bar.set_persistent_error(&error_msg);
+                    None
+                }
+            };
 
         // If we failed to create both renderer and pane, exit
         if renderer.is_none() && initial_pane.is_none() {
-            self.status_bar.set_persistent_error("Failed to initialize terminal. Please check your system.");
+            self.status_bar
+                .set_persistent_error("Failed to initialize terminal. Please check your system.");
             event_loop.exit();
             return;
         }
@@ -1848,8 +1886,12 @@ impl ApplicationHandler for TerminalApp {
             tracing::warn!("Failed to initialize clipboard: {}", e);
         }
 
-        tracing::info!("Terminal application started with config: {}x{} terminal, {}px font",
-            self.config.terminal.cols, self.config.terminal.rows, self.config.font.size);
+        tracing::info!(
+            "Terminal application started with config: {}x{} terminal, {}px font",
+            self.config.terminal.cols,
+            self.config.terminal.rows,
+            self.config.font.size
+        );
     }
 
     fn window_event(
@@ -1872,9 +1914,9 @@ impl ApplicationHandler for TerminalApp {
                 // Check for special shortcuts
                 if event.state == ElementState::Pressed {
                     // Check for AI palette toggle (Ctrl+Space)
-                    let is_ctrl_space = matches!(&event.logical_key, Key::Character(c) if c == " " || c == " ")
+                    let is_ctrl_space = matches!(&event.logical_key, Key::Character(c) if c == " ")
                         && self.input_handler.modifiers().ctrl;
-                    
+
                     if is_ctrl_space {
                         self.ai_palette.toggle();
                         return;
@@ -1884,7 +1926,7 @@ impl ApplicationHandler for TerminalApp {
                 // Handle AI palette input if open
                 if self.ai_palette.is_visible() {
                     use winit::event::ElementState;
-                    
+
                     if event.state == ElementState::Pressed {
                         match &event.logical_key {
                             Key::Named(NamedKey::Escape) => {
@@ -1914,35 +1956,33 @@ impl ApplicationHandler for TerminalApp {
                 }
 
                 // Handle search mode input if search is active
-                if self.search_state.active {
-                    if event.state == ElementState::Pressed {
-                        match &event.logical_key {
-                            Key::Named(NamedKey::Escape) => {
-                                self.handle_search_close();
-                                return;
+                if self.search_state.active && event.state == ElementState::Pressed {
+                    match &event.logical_key {
+                        Key::Named(NamedKey::Escape) => {
+                            self.handle_search_close();
+                            return;
+                        }
+                        Key::Named(NamedKey::Enter) => {
+                            if self.input_handler.modifiers().shift {
+                                self.handle_search_prev();
+                            } else {
+                                self.handle_search_next();
                             }
-                            Key::Named(NamedKey::Enter) => {
-                                if self.input_handler.modifiers().shift {
-                                    self.handle_search_prev();
-                                } else {
-                                    self.handle_search_next();
-                                }
-                                return;
+                            return;
+                        }
+                        Key::Named(NamedKey::Backspace) => {
+                            self.handle_search_backspace();
+                            return;
+                        }
+                        Key::Character(c) => {
+                            for ch in c.chars() {
+                                self.handle_search_input(ch);
                             }
-                            Key::Named(NamedKey::Backspace) => {
-                                self.handle_search_backspace();
-                                return;
-                            }
-                            Key::Character(c) => {
-                                for ch in c.chars() {
-                                    self.handle_search_input(ch);
-                                }
-                                return;
-                            }
-                            _ => {
-                                // Ignore other keys in search mode
-                                return;
-                            }
+                            return;
+                        }
+                        _ => {
+                            // Ignore other keys in search mode
+                            return;
                         }
                     }
                 }
@@ -1950,7 +1990,9 @@ impl ApplicationHandler for TerminalApp {
                 // Check for keybindings from config
                 if event.state == ElementState::Pressed {
                     // Look up action from config keybindings
-                    if let Some(action) = self.lookup_keybinding_action(&event.logical_key, self.modifiers) {
+                    if let Some(action) =
+                        self.lookup_keybinding_action(&event.logical_key, self.modifiers)
+                    {
                         if self.execute_action(action) {
                             return;
                         }

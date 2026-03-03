@@ -161,10 +161,7 @@ impl AIProvider for OpenAIProvider {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(AIError::Api(format!(
-                "API error ({}): {}",
-                status, body
-            )));
+            return Err(AIError::Api(format!("API error ({}): {}", status, body)));
         }
 
         let chat_response: ChatResponse = response

@@ -401,7 +401,8 @@ impl TerminalGrid {
             if row < scrolled_rows {
                 // This row is from scrollback
                 let scrollback_idx = scrollback_len - scrolled_rows + row;
-                self.scrollback.get(scrollback_idx)
+                self.scrollback
+                    .get(scrollback_idx)
                     .and_then(|row_cells| row_cells.get(col))
             } else {
                 // This row is from the grid
@@ -1193,9 +1194,11 @@ mod tests {
     #[test]
     fn test_put_char_with_attributes() {
         let mut grid = TerminalGrid::new();
-        let mut attrs = TextAttributes::default();
-        attrs.bold = true;
-        attrs.underline = true;
+        let attrs = TextAttributes {
+            bold: true,
+            underline: true,
+            ..Default::default()
+        };
         grid.set_attributes(attrs);
 
         grid.put_char('B');
@@ -1507,8 +1510,10 @@ mod tests {
         grid.move_cursor(10, 20);
         grid.set_foreground(Color::Indexed(5));
         grid.set_background(Color::Rgb(100, 100, 100));
-        let mut attrs = TextAttributes::default();
-        attrs.bold = true;
+        let attrs = TextAttributes {
+            bold: true,
+            ..Default::default()
+        };
         grid.set_attributes(attrs);
 
         let saved = grid.save_cursor();
@@ -1579,8 +1584,10 @@ mod tests {
         grid.move_cursor(2, 4);
         grid.set_foreground(Color::Indexed(1));
         grid.set_background(Color::Rgb(50, 50, 50));
-        let mut attrs = TextAttributes::default();
-        attrs.bold = true;
+        let attrs = TextAttributes {
+            bold: true,
+            ..Default::default()
+        };
         grid.set_attributes(attrs);
 
         grid.put_char('X');
@@ -1796,11 +1803,13 @@ mod tests {
 
     #[test]
     fn test_cell_with_attributes() {
-        let mut attrs = TextAttributes::default();
-        attrs.bold = true;
-        attrs.italic = true;
-        attrs.underline = true;
-        attrs.blink = true;
+        let attrs = TextAttributes {
+            bold: true,
+            italic: true,
+            underline: true,
+            blink: true,
+            ..Default::default()
+        };
 
         let cell = Cell::with_attributes('X', Color::Indexed(1), Color::Indexed(0), attrs);
 
@@ -1816,8 +1825,10 @@ mod tests {
     #[test]
     fn test_put_char_with_bold() {
         let mut grid = TerminalGrid::new();
-        let mut attrs = TextAttributes::default();
-        attrs.bold = true;
+        let attrs = TextAttributes {
+            bold: true,
+            ..Default::default()
+        };
         grid.set_attributes(attrs);
 
         grid.put_char('B');
@@ -1829,8 +1840,10 @@ mod tests {
     #[test]
     fn test_put_char_with_italic() {
         let mut grid = TerminalGrid::new();
-        let mut attrs = TextAttributes::default();
-        attrs.italic = true;
+        let attrs = TextAttributes {
+            italic: true,
+            ..Default::default()
+        };
         grid.set_attributes(attrs);
 
         grid.put_char('I');
@@ -1842,8 +1855,10 @@ mod tests {
     #[test]
     fn test_put_char_with_underline() {
         let mut grid = TerminalGrid::new();
-        let mut attrs = TextAttributes::default();
-        attrs.underline = true;
+        let attrs = TextAttributes {
+            underline: true,
+            ..Default::default()
+        };
         grid.set_attributes(attrs);
 
         grid.put_char('U');
@@ -1855,8 +1870,10 @@ mod tests {
     #[test]
     fn test_put_char_with_blink() {
         let mut grid = TerminalGrid::new();
-        let mut attrs = TextAttributes::default();
-        attrs.blink = true;
+        let attrs = TextAttributes {
+            blink: true,
+            ..Default::default()
+        };
         grid.set_attributes(attrs);
 
         grid.put_char('B');
@@ -1868,11 +1885,13 @@ mod tests {
     #[test]
     fn test_put_char_with_all_attributes() {
         let mut grid = TerminalGrid::new();
-        let mut attrs = TextAttributes::default();
-        attrs.bold = true;
-        attrs.italic = true;
-        attrs.underline = true;
-        attrs.blink = true;
+        let attrs = TextAttributes {
+            bold: true,
+            italic: true,
+            underline: true,
+            blink: true,
+            ..Default::default()
+        };
         grid.set_attributes(attrs);
 
         grid.put_char('A');
@@ -1887,9 +1906,11 @@ mod tests {
     #[test]
     fn test_attribute_persistence_across_cells() {
         let mut grid = TerminalGrid::new();
-        let mut attrs = TextAttributes::default();
-        attrs.bold = true;
-        attrs.underline = true;
+        let attrs = TextAttributes {
+            bold: true,
+            underline: true,
+            ..Default::default()
+        };
         grid.set_attributes(attrs);
 
         // Write multiple characters with same attributes
@@ -1911,21 +1932,24 @@ mod tests {
         let mut grid = TerminalGrid::new();
 
         // First character with bold
-        let mut attrs = TextAttributes::default();
-        attrs.bold = true;
-        grid.set_attributes(attrs);
+        grid.set_attributes(TextAttributes {
+            bold: true,
+            ..Default::default()
+        });
         grid.put_char('A');
 
         // Second character with underline (not bold)
-        attrs.bold = false;
-        attrs.underline = true;
-        grid.set_attributes(attrs);
+        grid.set_attributes(TextAttributes {
+            underline: true,
+            ..Default::default()
+        });
         grid.put_char('B');
 
         // Third character with italic
-        attrs.underline = false;
-        attrs.italic = true;
-        grid.set_attributes(attrs);
+        grid.set_attributes(TextAttributes {
+            italic: true,
+            ..Default::default()
+        });
         grid.put_char('C');
 
         let cell_a = grid.get_cell(0, 0).unwrap();
@@ -1945,11 +1969,13 @@ mod tests {
 
     #[test]
     fn test_attributes_reset_in_cell() {
-        let mut attrs = TextAttributes::default();
-        attrs.bold = true;
-        attrs.italic = true;
-        attrs.underline = true;
-        attrs.blink = true;
+        let attrs = TextAttributes {
+            bold: true,
+            italic: true,
+            underline: true,
+            blink: true,
+            ..Default::default()
+        };
 
         let mut cell = Cell::with_attributes('X', Color::Default, Color::Default, attrs);
         assert!(!cell.is_empty()); // Has non-default attributes
@@ -1961,9 +1987,11 @@ mod tests {
     #[test]
     fn test_grid_attributes_getter() {
         let mut grid = TerminalGrid::new();
-        let mut attrs = TextAttributes::default();
-        attrs.bold = true;
-        attrs.italic = true;
+        let attrs = TextAttributes {
+            bold: true,
+            italic: true,
+            ..Default::default()
+        };
 
         grid.set_attributes(attrs);
         let retrieved = grid.attributes();
@@ -2004,9 +2032,11 @@ mod tests {
 
     #[test]
     fn test_text_attributes_copy() {
-        let mut attrs1 = TextAttributes::default();
-        attrs1.bold = true;
-        attrs1.italic = true;
+        let attrs1 = TextAttributes {
+            bold: true,
+            italic: true,
+            ..Default::default()
+        };
 
         let mut attrs2 = attrs1;
 

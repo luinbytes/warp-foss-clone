@@ -582,10 +582,7 @@ impl<O: TerminalOutput> Perform for ParserOutputWrapper<'_, O> {
         // OSC 7: Shell integration for current directory: ESC ] 7 ; file://hostname/path BEL
         if params.len() >= 2 && params[0] == b"7" {
             // Join all parts after "7;" in case the URL contains semicolons
-            let url_bytes: Vec<u8> = params[1..]
-                .iter()
-                .flat_map(|p| p.iter().copied())
-                .collect();
+            let url_bytes: Vec<u8> = params[1..].iter().flat_map(|p| p.iter().copied()).collect();
 
             if let Ok(url) = std::str::from_utf8(&url_bytes) {
                 if let Some(path) = parse_file_url(url) {
@@ -1055,10 +1052,7 @@ impl Perform for ParserState {
         // OSC 7: Shell integration for current directory: ESC ] 7 ; file://hostname/path BEL
         if params.len() >= 2 && params[0] == b"7" {
             // Join all parts after "7;" in case the URL contains semicolons
-            let url_bytes: Vec<u8> = params[1..]
-                .iter()
-                .flat_map(|p| p.iter().copied())
-                .collect();
+            let url_bytes: Vec<u8> = params[1..].iter().flat_map(|p| p.iter().copied()).collect();
 
             if let Ok(url) = std::str::from_utf8(&url_bytes) {
                 if let Some(path) = parse_file_url(url) {
@@ -1850,7 +1844,7 @@ mod tests {
         parser.parse_bytes(b"\x1B[4m"); // Re-enable
         parser.parse_bytes(b"\x1B[24m");
         assert!(parser.attributes().bold);
-        assert!(parser.attributes().italic == false);
+        assert!(!parser.attributes().italic);
         assert!(!parser.attributes().underline);
         assert!(parser.attributes().blink);
     }
@@ -1922,11 +1916,13 @@ mod tests {
 
     #[test]
     fn test_text_attributes_reset() {
-        let mut attrs = TextAttributes::default();
-        attrs.bold = true;
-        attrs.italic = true;
-        attrs.underline = true;
-        attrs.blink = true;
+        let mut attrs = TextAttributes {
+            bold: true,
+            italic: true,
+            underline: true,
+            blink: true,
+            ..Default::default()
+        };
 
         attrs.reset();
 
@@ -2369,14 +2365,8 @@ mod tests {
             parse_file_url("file://localhost/home/user"),
             Some("/home/user".to_string())
         );
-        assert_eq!(
-            parse_file_url("file://host/"),
-            Some("/".to_string())
-        );
-        assert_eq!(
-            parse_file_url("http://localhost/home"),
-            None
-        );
+        assert_eq!(parse_file_url("file://host/"), Some("/".to_string()));
+        assert_eq!(parse_file_url("http://localhost/home"), None);
         assert_eq!(parse_file_url("file://"), None);
         assert_eq!(parse_file_url("not a url"), None);
     }

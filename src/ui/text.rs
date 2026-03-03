@@ -346,12 +346,12 @@ impl GlyphAtlas {
         }
         Ok(())
     }
-    
+
     /// Get the number of cached glyphs
     pub fn cached_glyph_count(&self) -> usize {
         self.glyph_cache.len()
     }
-    
+
     /// Get the texture size
     pub fn texture_size(&self) -> u32 {
         ATLAS_SIZE
@@ -952,7 +952,7 @@ mod tests {
         assert_eq!(glyph_copy.width, glyph.width);
         assert_eq!(glyph_copy.height, glyph.height);
 
-        let glyph_clone = glyph.clone();
+        let glyph_clone = glyph;
         assert_eq!(glyph_clone.width, glyph.width);
         assert_eq!(glyph_clone.height, glyph.height);
     }
@@ -1129,7 +1129,7 @@ mod tests {
         let vertex_copy = vertex;
         assert_eq!(vertex_copy.position, vertex.position);
 
-        let vertex_clone = vertex.clone();
+        let vertex_clone = vertex;
         assert_eq!(vertex_clone.position, vertex.position);
     }
 
@@ -1138,7 +1138,6 @@ mod tests {
     #[test]
     fn test_glyph_atlas_new() {
         // GlyphAtlas::new doesn't require GPU until init_gpu is called
-        let font_size = 16.0;
         // We can't test new() directly because it requires a Device reference
         // even though it doesn't use it. But we can verify the constants.
         assert_eq!(MAX_GLYPH_SIZE, 64);
@@ -1149,11 +1148,11 @@ mod tests {
 
     #[test]
     fn test_atlas_constants() {
-        // Verify atlas dimensions are reasonable
-        assert!(ATLAS_SIZE > 0);
-        assert!(ATLAS_COLUMNS > 0);
-        assert!(ATLAS_ROWS > 0);
-        assert!(MAX_GLYPH_SIZE > 0);
+        // Verify atlas dimensions are reasonable using const assertions
+        const { assert!(ATLAS_SIZE > 0) };
+        const { assert!(ATLAS_COLUMNS > 0) };
+        const { assert!(ATLAS_ROWS > 0) };
+        const { assert!(MAX_GLYPH_SIZE > 0) };
 
         // Verify the math works out
         assert_eq!(ATLAS_SIZE, MAX_GLYPH_SIZE * ATLAS_COLUMNS);

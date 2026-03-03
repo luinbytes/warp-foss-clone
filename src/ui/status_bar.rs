@@ -175,7 +175,7 @@ impl StatusBar {
 
         // Try to get git branch using git command
         let output = Command::new("git")
-            .args(&["rev-parse", "--abbrev-ref", "HEAD"])
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
             .current_dir(path)
             .output()
             .ok()?;
