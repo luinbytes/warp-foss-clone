@@ -30,7 +30,7 @@ A free and open-source clone of [Warp](https://warp.dev/) terminal with AI integ
 - ✅ WASM plugin system
 
 **In Progress:**
-- 🚧 Shell integration for directory tracking
+- ✅ Shell integration for directory tracking
 - 🚧 Scrollback buffer
 - 🚧 Configuration system
 
@@ -217,6 +217,51 @@ export ANTHROPIC_API_KEY="your-key"
 
 Then use `Ctrl+Space` in the terminal to open the AI command palette.
 
+## Shell Integration
+
+Warp FOSS supports shell integration for directory tracking via OSC 7 escape sequences. This allows the status bar to display your current working directory.
+
+### Automatic Installation
+
+```bash
+# Detect your shell and show installation instructions
+./shell/install.sh
+
+# Or automatically install for current shell
+./shell/install.sh --install
+```
+
+### Manual Installation
+
+**Bash (~/.bashrc):**
+```bash
+source /path/to/warp-foss-clone/shell/bash/warp-foss.sh
+```
+
+**Zsh (~/.zshrc):**
+```zsh
+source /path/to/warp-foss-clone/shell/zsh/warp-foss.zsh
+```
+
+**Fish (~/.config/fish/config.fish):**
+```fish
+source /path/to/warp-foss-clone/shell/fish/warp-foss.fish
+```
+
+### How It Works
+
+The shell integration emits OSC 7 escape sequences when the directory changes:
+```
+ESC ] 7 ; file://hostname/path BEL
+```
+
+The terminal parses these sequences and updates the status bar accordingly.
+
+### Supported Shells
+- ✅ Bash 4.0+
+- ✅ Zsh 5.0+
+- ✅ Fish 3.0+
+
 ## Status
 
 🚧 Early development - core features functional, many enhancements planned.
@@ -257,7 +302,7 @@ cargo build --release --target x86_64-pc-windows-gnu
 - [x] Split panes and layout management
 - [x] Tab management with tab bar UI
 - [x] Basic AI integration
-- [ ] Shell integration (directory tracking)
+- [x] Shell integration (directory tracking)
 - [x] Scrollback buffer (search implemented)
 - [ ] Configuration system
 
