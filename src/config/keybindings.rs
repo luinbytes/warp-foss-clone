@@ -80,6 +80,28 @@ pub enum Action {
     NewTab,
     /// Close current tab
     CloseTab,
+    /// Switch to next tab
+    NextTab,
+    /// Switch to previous tab
+    PrevTab,
+    /// Switch to tab 1
+    Tab1,
+    /// Switch to tab 2
+    Tab2,
+    /// Switch to tab 3
+    Tab3,
+    /// Switch to tab 4
+    Tab4,
+    /// Switch to tab 5
+    Tab5,
+    /// Switch to tab 6
+    Tab6,
+    /// Switch to tab 7
+    Tab7,
+    /// Switch to tab 8
+    Tab8,
+    /// Switch to tab 9
+    Tab9,
     /// Split pane horizontally
     SplitHorizontal,
     /// Split pane vertically
@@ -141,6 +163,17 @@ fn default_keybindings() -> HashMap<KeyCombo, Action> {
     // Tab management
     bindings.insert(KeyCombo::ctrl_shift("t"), Action::NewTab);
     bindings.insert(KeyCombo::ctrl_shift("w"), Action::CloseTab);
+    bindings.insert(KeyCombo::ctrl("Tab"), Action::NextTab);
+    bindings.insert(KeyCombo::ctrl_shift("Tab"), Action::PrevTab);
+    bindings.insert(KeyCombo::ctrl("1"), Action::Tab1);
+    bindings.insert(KeyCombo::ctrl("2"), Action::Tab2);
+    bindings.insert(KeyCombo::ctrl("3"), Action::Tab3);
+    bindings.insert(KeyCombo::ctrl("4"), Action::Tab4);
+    bindings.insert(KeyCombo::ctrl("5"), Action::Tab5);
+    bindings.insert(KeyCombo::ctrl("6"), Action::Tab6);
+    bindings.insert(KeyCombo::ctrl("7"), Action::Tab7);
+    bindings.insert(KeyCombo::ctrl("8"), Action::Tab8);
+    bindings.insert(KeyCombo::ctrl("9"), Action::Tab9);
 
     // Pane splitting
     bindings.insert(KeyCombo::ctrl_shift("d"), Action::SplitHorizontal);
@@ -148,7 +181,6 @@ fn default_keybindings() -> HashMap<KeyCombo, Action> {
 
     // Focus navigation
     bindings.insert(KeyCombo::ctrl_shift("right"), Action::FocusNext);
-    bindings.insert(KeyCombo::ctrl_shift("Tab"), Action::FocusPrev);
     bindings.insert(KeyCombo::alt("right"), Action::FocusNext);
     bindings.insert(KeyCombo::alt("left"), Action::FocusPrev);
 

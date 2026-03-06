@@ -24,6 +24,7 @@ use terminal::pty::{PtyConfig, PtySession};
 use ui::ai_command_palette::AICommandPalette;
 use ui::input::InputHandler;
 use ui::layout::{LayoutTree, Pane, Rect, SplitDirection};
+use ui::tabs::{Tab, TabManager};
 use ui::selection::{extract_selected_text, Clipboard, SelectionState};
 use ui::status_bar::StatusBar;
 use winit::{
@@ -43,8 +44,8 @@ struct TerminalApp {
     window: Option<Arc<Window>>,
     /// GPU renderer - stored as raw parts to avoid lifetime issues
     renderer: Option<RendererHolder>,
-    /// Layout tree managing all panes
-    layout: Option<LayoutTree>,
+    /// Tab manager for all tabs (each tab has its own layout tree)
+    tab_manager: Option<TabManager>,
     /// Input handler for keyboard events
     input_handler: InputHandler,
     /// Selection state for mouse selection
@@ -299,6 +300,167 @@ impl RendererHolder {
 
         // Render to screen
         self.render()
+    }
+
+    /// Render layout with tab bar
+    #[allow(clippy::too_many_arguments)]
+    fn render_layout_with_tabs(
+        &mut self,
+        tab_manager: &TabManager,
+        cell_width: u32,
+        cell_height: u32,
+        focused_pane_id: uuid::Uuid,
+        search_state: &SearchState,
+        search_input: &str,
+        ai_palette: &AICommandPalette,
+        status_bar: &StatusBar,
+        padding: (u16, u16),
+    ) -> Result<(), ui::renderer::RendererError> {
+        // Clear previous frame's text
+        self.text_renderer.clear();
+
+        // Render tab bar at top
+        self.render_tab_bar(tab_manager, cell_width, cell_height)?;
+
+        // Render the active tab's layout
+        if let Some(tab) = tab_manager.active_tab() {
+            self.render_node(
+                tab.layout.root(),
+                cell_width,
+                cell_height,
+                focused_pane_id,
+                search_state,
+                search_input,
+                padding,
+            )?;
+        }
+
+        // Render AI palette overlay if visible
+        if ai_palette.is_visible() {
+            self.render_ai_palette(ai_palette, cell_width, cell_height)?;
+        }
+
+        // Render status bar if visible
+        if status_bar.is_visible() {
+            self.render_status_bar(status_bar, cell_width, cell_height)?;
+        }
+
+        // Prepare text renderer (upload glyph atlas and vertex data)
+        self.text_renderer.prepare(&self.device, &self.queue);
+
+        // Render to screen
+        self.render()
+    }
+
+    /// Render the tab bar at the top of the window
+    fn render_tab_bar(
+        &mut self,
+        tab_manager: &TabManager,
+        cell_width: u32,
+        cell_height: u32,
+    ) -> Result<(), ui::renderer::RendererError> {
+        use terminal::parser::Color;
+
+        let tab_bar_height = tab_manager.tab_bar_height();
+        let tabs = tab_manager.tabs();
+        let active_index = tab_manager.active_tab_index();
+
+        // Draw tab bar background
+        let bg_color = Color::Rgb(30, 30, 30);
+        let window_width = self.config.width;
+
+        // Draw a filled rectangle for the tab bar using spaces
+        let chars_per_row = (window_width / cell_width) as usize;
+        let rows_in_bar = (tab_bar_height / cell_height) as usize;
+
+        for row in 0..rows_in_bar {
+            for col in 0..chars_per_row {
+                self.text_renderer.queue_char(
+                    ' ',
+                    col as f32 * cell_width as f32,
+                    row as f32 * cell_height as f32,
+                    Color::Rgb(255, 255, 255),
+                    bg_color,
+                    false,
+                    false,
+                    false,
+                    false,
+                )?;
+            }
+        }
+
+        // Draw tabs
+        let mut x_offset: f32 = 8.0; // Small left margin
+        let tab_height = rows_in_bar.saturating_sub(1) as f32 * cell_height as f32;
+
+        for (index, tab) in tabs.iter().enumerate() {
+            let is_active = index == active_index;
+
+            // Tab colors
+            let (tab_bg, tab_fg) = if is_active {
+                (Color::Rgb(50, 50, 50), Color::Rgb(255, 255, 255))
+            } else {
+                (Color::Rgb(40, 40, 40), Color::Rgb(180, 180, 180))
+            };
+
+            // Calculate tab width based on title
+            let title = &tab.title;
+            let tab_padding = 2; // Padding on each side
+            let tab_width_chars = title.chars().count() + tab_padding * 2;
+            let tab_width = tab_width_chars as f32 * cell_width as f32;
+
+            // Draw tab background
+            for row in 0..rows_in_bar {
+                for col in 0..tab_width_chars {
+                    let char_x = x_offset + col as f32 * cell_width as f32;
+                    let char_y = row as f32 * cell_height as f32;
+
+                    // Only draw if within window bounds
+                    if char_x < window_width as f32 {
+                        self.text_renderer.queue_char(
+                            ' ',
+                            char_x,
+                            char_y,
+                            tab_fg,
+                            tab_bg,
+                            false,
+                            false,
+                            false,
+                            false,
+                        )?;
+                    }
+                }
+            }
+
+            // Draw tab title
+            for (i, ch) in title.chars().enumerate() {
+                let char_x = x_offset + (tab_padding + i) as f32 * cell_width as f32;
+                let char_y = tab_height - (cell_height as f32);
+
+                if char_x < window_width as f32 - cell_width as f32 {
+                    self.text_renderer.queue_char(
+                        ch,
+                        char_x,
+                        char_y,
+                        tab_fg,
+                        tab_bg,
+                        is_active, // Bold if active
+                        false,
+                        false,
+                        false,
+                    )?;
+                }
+            }
+
+            x_offset += tab_width + 4.0; // Small gap between tabs
+
+            // Stop if we run out of space
+            if x_offset >= window_width as f32 {
+                break;
+            }
+        }
+
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1044,7 +1206,7 @@ impl TerminalApp {
             config,
             window: None,
             renderer: None,
-            layout: None,
+            tab_manager: None,
             input_handler: InputHandler::new(),
             selection_state: SelectionState::new(),
             clipboard: Clipboard::new(),
@@ -1184,11 +1346,54 @@ impl TerminalApp {
                 let _ = self.handle_paste();
             }
             Action::NewTab => {
-                // TODO: Implement tab management
-                tracing::info!("NewTab action triggered (not yet implemented)");
+                self.handle_new_tab();
             }
             Action::CloseTab => {
-                self.handle_close_pane();
+                // If this is the last tab, quit the app
+                if let Some(ref tab_manager) = self.tab_manager {
+                    if tab_manager.tab_count() <= 1 {
+                        self.running = false;
+                    } else {
+                        self.handle_close_tab();
+                    }
+                }
+            }
+            Action::NextTab => {
+                self.handle_next_tab();
+            }
+            Action::PrevTab => {
+                self.handle_prev_tab();
+            }
+            Action::Tab1 => {
+                self.handle_switch_to_tab(0);
+            }
+            Action::Tab2 => {
+                self.handle_switch_to_tab(1);
+            }
+            Action::Tab3 => {
+                self.handle_switch_to_tab(2);
+            }
+            Action::Tab4 => {
+                self.handle_switch_to_tab(3);
+            }
+            Action::Tab5 => {
+                self.handle_switch_to_tab(4);
+            }
+            Action::Tab6 => {
+                self.handle_switch_to_tab(5);
+            }
+            Action::Tab7 => {
+                self.handle_switch_to_tab(6);
+            }
+            Action::Tab8 => {
+                self.handle_switch_to_tab(7);
+            }
+            Action::Tab9 => {
+                // Tab9 goes to the last tab (or 9th if there are more)
+                if let Some(ref tab_manager) = self.tab_manager {
+                    let last_index = tab_manager.tab_count().saturating_sub(1);
+                    self.handle_switch_to_tab(last_index.min(8));
+                }
             }
             Action::SplitHorizontal => {
                 self.handle_split(SplitDirection::Horizontal);
@@ -1255,14 +1460,14 @@ impl TerminalApp {
 
     /// Read and process PTY output from all panes (non-blocking)
     fn read_all_pty_output(&mut self) {
-        if let Some(ref mut layout) = self.layout {
-            // Get all pane IDs
-            let pane_ids = layout.all_pane_ids();
-
-            // Read from each pane
-            for pane_id in pane_ids {
-                if let Some(pane) = layout.get_pane_mut(pane_id) {
-                    Self::read_pane_output(pane);
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            // Read from all panes in the active tab
+            if let Some(tab) = tab_manager.active_tab_mut() {
+                let pane_ids = tab.layout.all_pane_ids();
+                for pane_id in pane_ids {
+                    if let Some(pane) = tab.layout.get_pane_mut(pane_id) {
+                        Self::read_pane_output(pane);
+                    }
                 }
             }
         }
@@ -1355,10 +1560,10 @@ impl TerminalApp {
     /// Send input to the focused pane's PTY
     fn send_pty_input(&mut self, data: &[u8]) {
         if !data.is_empty() {
-            if let Some(ref layout) = self.layout {
-                let focused_id = layout.focused_pane_id();
-                if let Some(ref mut layout) = self.layout {
-                    if let Some(pane) = layout.get_pane_mut(focused_id) {
+            if let Some(ref mut tab_manager) = self.tab_manager {
+                if let Some(tab) = tab_manager.active_tab_mut() {
+                    let focused_id = tab.layout.focused_pane_id();
+                    if let Some(pane) = tab.layout.get_pane_mut(focused_id) {
                         if let Ok(mut session) = pane.pty.lock() {
                             if let Err(e) = session.write(data) {
                                 let error_msg = format!("Write error: {}", e);
@@ -1396,28 +1601,34 @@ impl TerminalApp {
             renderer.resize(width, height);
         }
 
-        // Calculate layout bounds
-        let total_bounds = Rect::new(0, 0, width, height);
+        // Calculate content bounds (excluding tab bar)
+        let content_bounds = if let Some(ref tab_manager) = self.tab_manager {
+            tab_manager.content_bounds(width, height)
+        } else {
+            Rect::new(0, 0, width, height)
+        };
 
-        // Update layout and recalculate all pane bounds
-        if let Some(ref mut layout) = self.layout {
-            layout.calculate_layout(total_bounds);
+        // Update layout and recalculate all pane bounds for active tab
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            tab_manager.calculate_layout(content_bounds);
 
-            // Resize each pane's grid and PTY based on new bounds
-            let pane_ids = layout.all_pane_ids();
-            for pane_id in pane_ids {
-                if let Some(pane) = layout.get_pane_mut(pane_id) {
-                    let (new_cols, new_rows) =
-                        pane.terminal_size(self.cell_width, self.cell_height);
+            // Resize each pane's grid and PTY based on new bounds in active tab
+            if let Some(tab) = tab_manager.active_tab_mut() {
+                let pane_ids = tab.layout.all_pane_ids();
+                for pane_id in pane_ids {
+                    if let Some(pane) = tab.layout.get_pane_mut(pane_id) {
+                        let (new_cols, new_rows) =
+                            pane.terminal_size(self.cell_width, self.cell_height);
 
-                    if new_cols > 0 && new_rows > 0 {
-                        pane.grid.resize(new_cols, new_rows);
-                        pane.parser.resize(new_cols, new_rows);
+                        if new_cols > 0 && new_rows > 0 {
+                            pane.grid.resize(new_cols, new_rows);
+                            pane.parser.resize(new_cols, new_rows);
 
-                        // Resize the PTY
-                        if let Ok(mut session) = pane.pty.lock() {
-                            if let Err(e) = session.resize(new_cols as u16, new_rows as u16) {
-                                tracing::error!("Failed to resize PTY: {}", e);
+                            // Resize the PTY
+                            if let Ok(mut session) = pane.pty.lock() {
+                                if let Err(e) = session.resize(new_cols as u16, new_rows as u16) {
+                                    tracing::error!("Failed to resize PTY: {}", e);
+                                }
                             }
                         }
                     }
@@ -1436,21 +1647,28 @@ impl TerminalApp {
         // Update status bar with focused pane's working directory
         self.update_status_bar();
 
-        if let (Some(ref mut renderer), Some(ref layout)) = (&mut self.renderer, &self.layout) {
-            let focused_id = layout.focused_pane_id();
-            tracing::debug!("calling render_layout, focused_id={}", focused_id);
-            if let Err(e) = renderer.render_layout(
-                layout,
-                self.cell_width,
-                self.cell_height,
-                focused_id,
-                &self.search_state,
-                &self.search_input,
-                &self.ai_palette,
-                &self.status_bar,
-                self.config.window.padding,
-            ) {
-                tracing::error!("Render error: {}", e);
+        // Update tab titles
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            tab_manager.update_titles();
+        }
+
+        if let (Some(ref mut renderer), Some(ref tab_manager)) = (&mut self.renderer, &self.tab_manager) {
+            if let Some(tab) = tab_manager.active_tab() {
+                let focused_id = tab.layout.focused_pane_id();
+                tracing::debug!("calling render_layout, focused_id={}", focused_id);
+                if let Err(e) = renderer.render_layout_with_tabs(
+                    tab_manager,
+                    self.cell_width,
+                    self.cell_height,
+                    focused_id,
+                    &self.search_state,
+                    &self.search_input,
+                    &self.ai_palette,
+                    &self.status_bar,
+                    self.config.window.padding,
+                ) {
+                    tracing::error!("Render error: {}", e);
+                }
             }
         }
     }
@@ -1460,12 +1678,14 @@ impl TerminalApp {
         // Clean up expired transient errors and toasts
         self.status_bar.cleanup_expired();
 
-        if let Some(ref layout) = self.layout {
-            let focused_id = layout.focused_pane_id();
-            if let Some(pane) = layout.get_pane(focused_id) {
-                // Try to get the working directory from the PTY's child process
-                let cwd = self.get_pane_cwd(pane);
-                self.status_bar.update(&cwd);
+        if let Some(ref tab_manager) = self.tab_manager {
+            if let Some(tab) = tab_manager.active_tab() {
+                let focused_id = tab.layout.focused_pane_id();
+                if let Some(pane) = tab.layout.get_pane(focused_id) {
+                    // Try to get the working directory from the PTY's child process
+                    let cwd = self.get_pane_cwd(pane);
+                    self.status_bar.update(&cwd);
+                }
             }
         }
     }
@@ -1485,19 +1705,21 @@ impl TerminalApp {
 
     /// Convert pixel position to grid coordinates (and pane ID)
     fn pixel_to_pane_and_grid(&self, x: f64, y: f64) -> Option<(uuid::Uuid, usize, usize)> {
-        if let Some(ref layout) = self.layout {
-            let pane_ids = layout.all_pane_ids();
-            for pane_id in pane_ids {
-                if let Some(pane) = layout.get_pane(pane_id) {
-                    if pane.bounds.contains(x as u32, y as u32) {
-                        // Click is within this pane
-                        let local_x = x as u32 - pane.bounds.x;
-                        let local_y = y as u32 - pane.bounds.y;
-                        let col = (local_x / self.cell_width) as usize;
-                        let row = (local_y / self.cell_height) as usize;
+        if let Some(ref tab_manager) = self.tab_manager {
+            if let Some(tab) = tab_manager.active_tab() {
+                let pane_ids = tab.layout.all_pane_ids();
+                for pane_id in pane_ids {
+                    if let Some(pane) = tab.layout.get_pane(pane_id) {
+                        if pane.bounds.contains(x as u32, y as u32) {
+                            // Click is within this pane
+                            let local_x = x as u32 - pane.bounds.x;
+                            let local_y = y as u32 - pane.bounds.y;
+                            let col = (local_x / self.cell_width) as usize;
+                            let row = (local_y / self.cell_height) as usize;
 
-                        if col < pane.grid.cols() && row < pane.grid.rows() {
-                            return Some((pane_id, col, row));
+                            if col < pane.grid.cols() && row < pane.grid.rows() {
+                                return Some((pane_id, col, row));
+                            }
                         }
                     }
                 }
@@ -1521,8 +1743,10 @@ impl TerminalApp {
         if let Some(pos) = self.cursor_position {
             if let Some((pane_id, col, row)) = self.pixel_to_pane_and_grid(pos.x, pos.y) {
                 // Focus the clicked pane
-                if let Some(ref mut layout) = self.layout {
-                    layout.set_focus(pane_id);
+                if let Some(ref mut tab_manager) = self.tab_manager {
+                    if let Some(tab) = tab_manager.active_tab_mut() {
+                        tab.layout.set_focus(pane_id);
+                    }
                 }
 
                 use crate::terminal::grid::Cursor;
@@ -1539,17 +1763,19 @@ impl TerminalApp {
                         // If Shift is held, copy to clipboard
                         if self.modifiers.shift_key() && self.selection_state.has_selection() {
                             // Get the focused pane's grid
-                            if let Some(ref layout) = self.layout {
-                                if let Some(pane) = layout.focused_pane() {
-                                    let selected_text = extract_selected_text(
-                                        pane.grid.as_rows(),
-                                        &self.selection_state.region,
-                                    );
-                                    if !selected_text.is_empty() {
-                                        if let Err(e) = self.clipboard.copy(&selected_text) {
-                                            tracing::warn!("Failed to copy to clipboard: {}", e);
-                                        } else {
-                                            tracing::debug!("Copied selection to clipboard");
+                            if let Some(ref tab_manager) = self.tab_manager {
+                                if let Some(tab) = tab_manager.active_tab() {
+                                    if let Some(pane) = tab.layout.focused_pane() {
+                                        let selected_text = extract_selected_text(
+                                            pane.grid.as_rows(),
+                                            &self.selection_state.region,
+                                        );
+                                        if !selected_text.is_empty() {
+                                            if let Err(e) = self.clipboard.copy(&selected_text) {
+                                                tracing::warn!("Failed to copy to clipboard: {}", e);
+                                            } else {
+                                                tracing::debug!("Copied selection to clipboard");
+                                            }
                                         }
                                     }
                                 }
@@ -1596,15 +1822,17 @@ impl TerminalApp {
     fn handle_copy(&mut self) {
         // Check if there's a selection
         if self.selection_state.has_selection() {
-            if let Some(ref layout) = self.layout {
-                if let Some(pane) = layout.focused_pane() {
-                    let selected_text =
-                        extract_selected_text(pane.grid.as_rows(), &self.selection_state.region);
-                    if !selected_text.is_empty() {
-                        if let Err(e) = self.clipboard.copy(&selected_text) {
-                            tracing::warn!("Failed to copy to clipboard: {}", e);
-                        } else {
-                            tracing::debug!("Copied selection to clipboard (Ctrl+Shift+C)");
+            if let Some(ref tab_manager) = self.tab_manager {
+                if let Some(tab) = tab_manager.active_tab() {
+                    if let Some(pane) = tab.layout.focused_pane() {
+                        let selected_text =
+                            extract_selected_text(pane.grid.as_rows(), &self.selection_state.region);
+                        if !selected_text.is_empty() {
+                            if let Err(e) = self.clipboard.copy(&selected_text) {
+                                tracing::warn!("Failed to copy to clipboard: {}", e);
+                            } else {
+                                tracing::debug!("Copied selection to clipboard (Ctrl+Shift+C)");
+                            }
                         }
                     }
                 }
@@ -1615,11 +1843,15 @@ impl TerminalApp {
     /// Handle pane split request
     fn handle_split(&mut self, direction: SplitDirection) {
         // Get focused pane info first to avoid borrow conflicts
-        let pane_info = if let Some(ref layout) = self.layout {
-            if let Some(focused) = layout.focused_pane() {
-                let (cols, rows) = focused.terminal_size(self.cell_width, self.cell_height);
-                let new_bounds = Rect::new(0, 0, focused.bounds.width / 2, focused.bounds.height);
-                Some((cols, rows, new_bounds))
+        let pane_info = if let Some(ref tab_manager) = self.tab_manager {
+            if let Some(tab) = tab_manager.active_tab() {
+                if let Some(focused) = tab.layout.focused_pane() {
+                    let (cols, rows) = focused.terminal_size(self.cell_width, self.cell_height);
+                    let new_bounds = Rect::new(0, 0, focused.bounds.width / 2, focused.bounds.height);
+                    Some((cols, rows, new_bounds))
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -1632,16 +1864,18 @@ impl TerminalApp {
             match self.create_pane(cols, rows, new_bounds) {
                 Ok(new_pane) => {
                     // Now do the split
-                    if let Some(ref mut layout) = self.layout {
-                        if let Err(e) = layout.split_focused(direction, new_pane) {
-                            tracing::warn!("Failed to split pane: {}", e);
-                            self.status_bar
-                                .set_error(&format!("Failed to split: {}", e));
-                        } else {
-                            // Recalculate layout
-                            if let Some(ref window) = self.window {
-                                let size = window.inner_size();
-                                self.handle_resize(size.width, size.height);
+                    if let Some(ref mut tab_manager) = self.tab_manager {
+                        if let Some(tab) = tab_manager.active_tab_mut() {
+                            if let Err(e) = tab.layout.split_focused(direction, new_pane) {
+                                tracing::warn!("Failed to split pane: {}", e);
+                                self.status_bar
+                                    .set_error(&format!("Failed to split: {}", e));
+                            } else {
+                                // Recalculate layout
+                                if let Some(ref window) = self.window {
+                                    let size = window.inner_size();
+                                    self.handle_resize(size.width, size.height);
+                                }
                             }
                         }
                     }
@@ -1657,14 +1891,18 @@ impl TerminalApp {
 
     /// Handle focus navigation
     fn handle_focus_next(&mut self) {
-        if let Some(ref mut layout) = self.layout {
-            layout.focus_next();
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            if let Some(tab) = tab_manager.active_tab_mut() {
+                tab.layout.focus_next();
+            }
         }
     }
 
     fn handle_focus_prev(&mut self) {
-        if let Some(ref mut layout) = self.layout {
-            layout.focus_prev();
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            if let Some(tab) = tab_manager.active_tab_mut() {
+                tab.layout.focus_prev();
+            }
         }
     }
 
@@ -1697,36 +1935,38 @@ impl TerminalApp {
     fn update_search(&mut self) {
         if self.search_state.set_pattern(&self.search_input).is_ok() {
             // Find matches in focused pane
-            if let Some(ref layout) = self.layout {
-                if let Some(pane) = layout.focused_pane() {
-                    // Collect all rows from the grid (including scrollback)
-                    let scrollback_len = pane.grid.scrollback_len();
-                    let mut rows: Vec<(usize, String)> = Vec::new();
+            if let Some(ref tab_manager) = self.tab_manager {
+                if let Some(tab) = tab_manager.active_tab() {
+                    if let Some(pane) = tab.layout.focused_pane() {
+                        // Collect all rows from the grid (including scrollback)
+                        let scrollback_len = pane.grid.scrollback_len();
+                        let mut rows: Vec<(usize, String)> = Vec::new();
 
-                    // Add scrollback rows (older history first)
-                    for i in 0..scrollback_len {
-                        if let Some(row) = pane.grid.get_scrollback_row(i) {
-                            let line: String = row.iter().map(|c| c.char).collect();
-                            rows.push((i, line));
-                        }
-                    }
-
-                    // Add visible grid rows
-                    for row in 0..pane.grid.rows() {
-                        let mut line = String::new();
-                        for col in 0..pane.grid.cols() {
-                            if let Some(cell) = pane.grid.get_cell(row, col) {
-                                line.push(cell.char);
-                            } else {
-                                line.push(' ');
+                        // Add scrollback rows (older history first)
+                        for i in 0..scrollback_len {
+                            if let Some(row) = pane.grid.get_scrollback_row(i) {
+                                let line: String = row.iter().map(|c| c.char).collect();
+                                rows.push((i, line));
                             }
                         }
-                        rows.push((scrollback_len + row, line));
-                    }
 
-                    // Update search state with matches
-                    self.search_state
-                        .find_matches(rows.iter().map(|(r, l)| (*r, l.as_str())));
+                        // Add visible grid rows
+                        for row in 0..pane.grid.rows() {
+                            let mut line = String::new();
+                            for col in 0..pane.grid.cols() {
+                                if let Some(cell) = pane.grid.get_cell(row, col) {
+                                    line.push(cell.char);
+                                } else {
+                                    line.push(' ');
+                                }
+                            }
+                            rows.push((scrollback_len + row, line));
+                        }
+
+                        // Update search state with matches
+                        self.search_state
+                            .find_matches(rows.iter().map(|(r, l)| (*r, l.as_str())));
+                    }
                 }
             }
         }
@@ -1754,18 +1994,20 @@ impl TerminalApp {
 
     /// Scroll to make a search match visible
     fn scroll_to_search_match(&mut self, match_row: usize) {
-        if let Some(ref mut layout) = self.layout {
-            if let Some(pane) = layout.focused_pane_mut() {
-                let scrollback_len = pane.grid.scrollback_len();
-                if match_row < scrollback_len {
-                    let visible_rows = pane.grid.rows();
-                    let scrollback_idx = match_row;
-                    let needed_scroll = (scrollback_len - scrollback_idx).min(visible_rows);
-                    if needed_scroll > 0 {
-                        let _ = pane.grid.scroll_up_history(needed_scroll);
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            if let Some(tab) = tab_manager.active_tab_mut() {
+                if let Some(pane) = tab.layout.focused_pane_mut() {
+                    let scrollback_len = pane.grid.scrollback_len();
+                    if match_row < scrollback_len {
+                        let visible_rows = pane.grid.rows();
+                        let scrollback_idx = match_row;
+                        let needed_scroll = (scrollback_len - scrollback_idx).min(visible_rows);
+                        if needed_scroll > 0 {
+                            let _ = pane.grid.scroll_up_history(needed_scroll);
+                        }
+                    } else if pane.grid.scroll_offset() > 0 {
+                        pane.grid.scroll_to_bottom();
                     }
-                } else if pane.grid.scroll_offset() > 0 {
-                    pane.grid.scroll_to_bottom();
                 }
             }
         }
@@ -1780,14 +2022,16 @@ impl TerminalApp {
 
     /// Handle pane close (Ctrl+W)
     fn handle_close_pane(&mut self) {
-        if let Some(ref mut layout) = self.layout {
-            if let Err(e) = layout.close_focused() {
-                tracing::warn!("Failed to close pane: {}", e);
-            } else {
-                // Recalculate layout after closing
-                if let Some(ref window) = self.window {
-                    let size = window.inner_size();
-                    self.handle_resize(size.width, size.height);
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            if let Some(tab) = tab_manager.active_tab_mut() {
+                if let Err(e) = tab.layout.close_focused() {
+                    tracing::warn!("Failed to close pane: {}", e);
+                } else {
+                    // Recalculate layout after closing
+                    if let Some(ref window) = self.window {
+                        let size = window.inner_size();
+                        self.handle_resize(size.width, size.height);
+                    }
                 }
             }
         }
@@ -1796,14 +2040,16 @@ impl TerminalApp {
     /// Handle pane resize (Ctrl+Shift+Arrow keys)
     #[allow(dead_code)]
     fn handle_resize_pane(&mut self, direction: SplitDirection, delta: f32) {
-        if let Some(ref mut layout) = self.layout {
-            if let Err(e) = layout.resize_focused(direction, delta) {
-                tracing::warn!("Failed to resize pane: {}", e);
-            } else {
-                // Recalculate layout after resizing
-                if let Some(ref window) = self.window {
-                    let size = window.inner_size();
-                    self.handle_resize(size.width, size.height);
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            if let Some(tab) = tab_manager.active_tab_mut() {
+                if let Err(e) = tab.layout.resize_focused(direction, delta) {
+                    tracing::warn!("Failed to resize pane: {}", e);
+                } else {
+                    // Recalculate layout after resizing
+                    if let Some(ref window) = self.window {
+                        let size = window.inner_size();
+                        self.handle_resize(size.width, size.height);
+                    }
                 }
             }
         }
@@ -1867,10 +2113,12 @@ impl TerminalApp {
 
     /// Get the viewport height in lines for the focused pane
     fn get_viewport_height(&self) -> usize {
-        if let Some(ref layout) = self.layout {
-            let focused_id = layout.focused_pane_id();
-            if let Some(pane) = layout.get_pane(focused_id) {
-                return pane.grid.rows();
+        if let Some(ref tab_manager) = self.tab_manager {
+            if let Some(tab) = tab_manager.active_tab() {
+                let focused_id = tab.layout.focused_pane_id();
+                if let Some(pane) = tab.layout.get_pane(focused_id) {
+                    return pane.grid.rows();
+                }
             }
         }
         // Fallback: estimate from window size
@@ -1879,40 +2127,139 @@ impl TerminalApp {
 
     /// Handle scrolling up in history
     fn handle_scroll_up(&mut self, lines: usize) {
-        if let Some(ref mut layout) = self.layout {
-            let focused_id = layout.focused_pane_id();
-            if let Some(pane) = layout.get_pane_mut(focused_id) {
-                pane.grid.scroll_up_history(lines);
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            if let Some(tab) = tab_manager.active_tab_mut() {
+                let focused_id = tab.layout.focused_pane_id();
+                if let Some(pane) = tab.layout.get_pane_mut(focused_id) {
+                    pane.grid.scroll_up_history(lines);
+                }
             }
         }
     }
 
     /// Handle scrolling down in history (towards present)
     fn handle_scroll_down(&mut self, lines: usize) {
-        if let Some(ref mut layout) = self.layout {
-            let focused_id = layout.focused_pane_id();
-            if let Some(pane) = layout.get_pane_mut(focused_id) {
-                pane.grid.scroll_down_history(lines);
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            if let Some(tab) = tab_manager.active_tab_mut() {
+                let focused_id = tab.layout.focused_pane_id();
+                if let Some(pane) = tab.layout.get_pane_mut(focused_id) {
+                    pane.grid.scroll_down_history(lines);
+                }
             }
         }
     }
 
     /// Handle scrolling to the top of history
     fn handle_scroll_to_top(&mut self) {
-        if let Some(ref mut layout) = self.layout {
-            let focused_id = layout.focused_pane_id();
-            if let Some(pane) = layout.get_pane_mut(focused_id) {
-                pane.grid.scroll_to_top();
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            if let Some(tab) = tab_manager.active_tab_mut() {
+                let focused_id = tab.layout.focused_pane_id();
+                if let Some(pane) = tab.layout.get_pane_mut(focused_id) {
+                    pane.grid.scroll_to_top();
+                }
             }
         }
     }
 
     /// Handle scrolling to the bottom (present)
     fn handle_scroll_to_bottom(&mut self) {
-        if let Some(ref mut layout) = self.layout {
-            let focused_id = layout.focused_pane_id();
-            if let Some(pane) = layout.get_pane_mut(focused_id) {
-                pane.grid.scroll_to_bottom();
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            if let Some(tab) = tab_manager.active_tab_mut() {
+                let focused_id = tab.layout.focused_pane_id();
+                if let Some(pane) = tab.layout.get_pane_mut(focused_id) {
+                    pane.grid.scroll_to_bottom();
+                }
+            }
+        }
+    }
+
+    /// Handle creating a new tab
+    fn handle_new_tab(&mut self) {
+        // Get the window size
+        if let Some(ref window) = self.window {
+            let size = window.inner_size();
+            let content_bounds = if let Some(ref tab_manager) = self.tab_manager {
+                tab_manager.content_bounds(size.width, size.height)
+            } else {
+                Rect::new(0, 0, size.width, size.height)
+            };
+
+            let cols = (content_bounds.width / self.cell_width) as usize;
+            let rows = (content_bounds.height / self.cell_height) as usize;
+
+            match self.create_pane(cols, rows, content_bounds) {
+                Ok(pane) => {
+                    let tab = Tab::new(pane);
+                    if let Some(ref mut tab_manager) = self.tab_manager {
+                        tab_manager.new_tab_from_tab(tab);
+                        // Recalculate layout
+                        self.handle_resize(size.width, size.height);
+                    }
+                }
+                Err(e) => {
+                    let error_msg = Self::format_pty_error(&e);
+                    tracing::error!("Failed to create new tab: {}", e);
+                    self.status_bar.set_error(&error_msg);
+                }
+            }
+        }
+    }
+
+    /// Handle closing the current tab
+    fn handle_close_tab(&mut self) {
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            if tab_manager.tab_count() <= 1 {
+                // Only one tab - this might be handled by CloseTab action
+                // which should quit or show confirmation
+                return;
+            }
+
+            if let Err(e) = tab_manager.close_current_tab() {
+                tracing::warn!("Failed to close tab: {}", e);
+                self.status_bar.set_error(&e);
+            } else {
+                // Recalculate layout for new active tab
+                if let Some(ref window) = self.window {
+                    let size = window.inner_size();
+                    self.handle_resize(size.width, size.height);
+                }
+            }
+        }
+    }
+
+    /// Handle switching to next tab
+    fn handle_next_tab(&mut self) {
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            tab_manager.next_tab();
+            // Recalculate layout
+            if let Some(ref window) = self.window {
+                let size = window.inner_size();
+                self.handle_resize(size.width, size.height);
+            }
+        }
+    }
+
+    /// Handle switching to previous tab
+    fn handle_prev_tab(&mut self) {
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            tab_manager.prev_tab();
+            // Recalculate layout
+            if let Some(ref window) = self.window {
+                let size = window.inner_size();
+                self.handle_resize(size.width, size.height);
+            }
+        }
+    }
+
+    /// Handle switching to a specific tab by index
+    fn handle_switch_to_tab(&mut self, index: usize) {
+        if let Some(ref mut tab_manager) = self.tab_manager {
+            if tab_manager.switch_to_tab(index) {
+                // Recalculate layout
+                if let Some(ref window) = self.window {
+                    let size = window.inner_size();
+                    self.handle_resize(size.width, size.height);
+                }
             }
         }
     }
@@ -1983,11 +2330,15 @@ impl ApplicationHandler for TerminalApp {
             return;
         }
 
-        let layout = initial_pane.map(LayoutTree::new);
+        // Create tab manager with initial tab
+        let tab_manager = initial_pane.map(|pane| {
+            let tab = Tab::new(pane);
+            TabManager::new(tab)
+        });
 
         self.window = Some(window);
         self.renderer = renderer;
-        self.layout = layout;
+        self.tab_manager = tab_manager;
         self.running = true;
 
         // Initialize clipboard (must be done from main thread)
