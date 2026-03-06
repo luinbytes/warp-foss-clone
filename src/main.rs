@@ -72,6 +72,10 @@ struct TerminalApp {
     ai_palette: AICommandPalette,
     /// Status bar
     status_bar: StatusBar,
+    /// Current font size (can be adjusted at runtime)
+    font_size: f32,
+    /// Default font size from config (for reset)
+    default_font_size: f32,
 }
 
 /// Type-erased renderer holder to work around lifetime issues
@@ -1033,6 +1037,8 @@ impl TerminalApp {
         let cell_width = (config.font.size * 0.6) as u32;
         // Cell height includes line height multiplier
         let cell_height = (config.font.size * config.font.line_height) as u32;
+        let font_size = config.font.size;
+        let default_font_size = config.font.size;
 
         Self {
             config,
@@ -1053,6 +1059,8 @@ impl TerminalApp {
             search_input: String::new(),
             ai_palette: AICommandPalette::new(),
             status_bar: StatusBar::new(),
+            font_size,
+            default_font_size,
         }
     }
 
@@ -1198,40 +1206,33 @@ impl TerminalApp {
                 self.handle_toggle_search();
             }
             Action::IncreaseFontSize => {
-                // TODO: Implement font size adjustment
-                tracing::info!("IncreaseFontSize action triggered (not yet implemented)");
+                self.handle_increase_font_size();
             }
             Action::DecreaseFontSize => {
-                // TODO: Implement font size adjustment
-                tracing::info!("DecreaseFontSize action triggered (not yet implemented)");
+                self.handle_decrease_font_size();
             }
             Action::ResetFontSize => {
-                // TODO: Implement font size reset
-                tracing::info!("ResetFontSize action triggered (not yet implemented)");
+                self.handle_reset_font_size();
             }
             Action::ScrollUp => {
-                // TODO: Implement scrolling
-                tracing::debug!("ScrollUp action triggered");
+                self.handle_scroll_up(1);
             }
             Action::ScrollDown => {
-                // TODO: Implement scrolling
-                tracing::debug!("ScrollDown action triggered");
+                self.handle_scroll_down(1);
             }
             Action::ScrollPageUp => {
-                // TODO: Implement page scrolling
-                tracing::debug!("ScrollPageUp action triggered");
+                let page_size = self.get_viewport_height();
+                self.handle_scroll_up(page_size);
             }
             Action::ScrollPageDown => {
-                // TODO: Implement page scrolling
-                tracing::debug!("ScrollPageDown action triggered");
+                let page_size = self.get_viewport_height();
+                self.handle_scroll_down(page_size);
             }
             Action::ScrollToTop => {
-                // TODO: Implement scroll to top
-                tracing::debug!("ScrollToTop action triggered");
+                self.handle_scroll_to_top();
             }
             Action::ScrollToBottom => {
-                // TODO: Implement scroll to bottom
-                tracing::debug!("ScrollToBottom action triggered");
+                self.handle_scroll_to_bottom();
             }
             Action::ToggleFullscreen => {
                 if let Some(ref window) = self.window {
@@ -1804,6 +1805,114 @@ impl TerminalApp {
                     let size = window.inner_size();
                     self.handle_resize(size.width, size.height);
                 }
+            }
+        }
+    }
+
+    /// Recreate the renderer with a new font size
+    fn recreate_renderer_with_font_size(&mut self, new_font_size: f32) {
+        if let Some(ref window) = self.window {
+            // Update cell dimensions based on new font size
+            let new_cell_width = (new_font_size * 0.6) as u32;
+            let new_cell_height = (new_font_size * self.config.font.line_height) as u32;
+            self.cell_width = new_cell_width.max(8);
+            self.cell_height = new_cell_height.max(12);
+            self.font_size = new_font_size;
+
+            // Recreate the renderer with the new font size
+            let new_renderer = match pollster::block_on(RendererHolder::new_with_config(
+                Arc::clone(window),
+                new_font_size,
+            )) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!("Failed to recreate renderer with new font size: {}", e);
+                    self.status_bar
+                        .add_toast(&format!("Failed to change font size: {}", e));
+                    return;
+                }
+            };
+            self.renderer = Some(new_renderer);
+
+            // Trigger a resize to update terminal grid sizes
+            let size = window.inner_size();
+            self.handle_resize(size.width, size.height);
+
+            tracing::debug!("Font size changed to {}", new_font_size);
+        }
+    }
+
+    /// Handle increasing font size (Ctrl+=)
+    fn handle_increase_font_size(&mut self) {
+        let new_size = (self.font_size + 1.0).min(32.0);
+        if new_size != self.font_size {
+            self.recreate_renderer_with_font_size(new_size);
+        }
+    }
+
+    /// Handle decreasing font size (Ctrl+-)
+    fn handle_decrease_font_size(&mut self) {
+        let new_size = (self.font_size - 1.0).max(8.0);
+        if new_size != self.font_size {
+            self.recreate_renderer_with_font_size(new_size);
+        }
+    }
+
+    /// Handle resetting font size to default (Ctrl+0)
+    fn handle_reset_font_size(&mut self) {
+        if self.font_size != self.default_font_size {
+            self.recreate_renderer_with_font_size(self.default_font_size);
+        }
+    }
+
+    /// Get the viewport height in lines for the focused pane
+    fn get_viewport_height(&self) -> usize {
+        if let Some(ref layout) = self.layout {
+            let focused_id = layout.focused_pane_id();
+            if let Some(pane) = layout.get_pane(focused_id) {
+                return pane.grid.rows();
+            }
+        }
+        // Fallback: estimate from window size
+        24
+    }
+
+    /// Handle scrolling up in history
+    fn handle_scroll_up(&mut self, lines: usize) {
+        if let Some(ref mut layout) = self.layout {
+            let focused_id = layout.focused_pane_id();
+            if let Some(pane) = layout.get_pane_mut(focused_id) {
+                pane.grid.scroll_up_history(lines);
+            }
+        }
+    }
+
+    /// Handle scrolling down in history (towards present)
+    fn handle_scroll_down(&mut self, lines: usize) {
+        if let Some(ref mut layout) = self.layout {
+            let focused_id = layout.focused_pane_id();
+            if let Some(pane) = layout.get_pane_mut(focused_id) {
+                pane.grid.scroll_down_history(lines);
+            }
+        }
+    }
+
+    /// Handle scrolling to the top of history
+    fn handle_scroll_to_top(&mut self) {
+        if let Some(ref mut layout) = self.layout {
+            let focused_id = layout.focused_pane_id();
+            if let Some(pane) = layout.get_pane_mut(focused_id) {
+                pane.grid.scroll_to_top();
+            }
+        }
+    }
+
+    /// Handle scrolling to the bottom (present)
+    fn handle_scroll_to_bottom(&mut self) {
+        if let Some(ref mut layout) = self.layout {
+            let focused_id = layout.focused_pane_id();
+            if let Some(pane) = layout.get_pane_mut(focused_id) {
+                pane.grid.scroll_to_bottom();
             }
         }
     }
