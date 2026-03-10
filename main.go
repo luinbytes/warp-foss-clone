@@ -86,12 +86,13 @@ type Model struct {
   aiMode   bool
   aiLoading bool
   aiPrompt  string
+  nlpParser *NLPParser
 }
 
 // InitialModel creates the initial application state
 func InitialModel() Model {
   ti := textinput.New()
-  ti.Placeholder = "Type a command..."
+  ti.Placeholder = "Type a command or natural language..."
   ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(themeMuted)
   ti.PromptStyle = cmdPromptStyle
   ti.Prompt = "❯ "
@@ -108,6 +109,7 @@ func InitialModel() Model {
     blocks:   make([]CommandBlock, 0),
     aiMode:   false,
     aiLoading: false,
+    nlpParser: NewNLPParser(),
   }
 }
 
@@ -172,8 +174,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
         m.textInput.SetValue("")
         cmds = append(cmds, stubAICall(input))
       } else {
-        // Regular command - stub execution
-        output := stubCommand(input)
+        // Try NLP parsing first
+        cmd, matched, desc := m.nlpParser.Parse(input)
+        var output string
+        if matched {
+          output = fmt.Sprintf("[NLP → %s]\n\n%s\n\n%s", cmd, desc, stubCommand(cmd))
+        } else {
+          // Raw command - stub execution
+          output = stubCommand(input)
+        }
         m.blocks = append(m.blocks, CommandBlock{
           Command: input,
           Output:  output,
