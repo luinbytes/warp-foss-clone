@@ -2,6 +2,9 @@ package main
 
 import (
   "fmt"
+  "os"
+  "os/exec"
+  "runtime"
   "strings"
 
   "github.com/charmbracelet/bubbles/spinner"
@@ -87,6 +90,14 @@ type Model struct {
   aiLoading bool
   aiPrompt  string
   nlpParser *NLPParser
+  cmdRunning bool
+}
+
+// CommandExecMsg is sent when a command finishes executing
+type CommandExecMsg struct {
+  Command string
+  Output  string
+  Error   error
 }
 
 // InitialModel creates the initial application state
@@ -176,20 +187,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
       } else {
         // Try NLP parsing first
         cmd, matched, desc := m.nlpParser.Parse(input)
-        var output string
         if matched {
-          output = fmt.Sprintf("[NLP → %s]\n\n%s\n\n%s", cmd, desc, stubCommand(cmd))
+          // Execute the translated command
+          m.cmdRunning = true
+          m.textInput.SetValue("")
+          return m, executeCommand(input, cmd, desc)
         } else {
-          // Raw command - stub execution
-          output = stubCommand(input)
+          // Execute raw command
+          m.cmdRunning = true
+          m.textInput.SetValue("")
+          return m, executeCommand(input, input, "")
         }
-        m.blocks = append(m.blocks, CommandBlock{
-          Command: input,
-          Output:  output,
-          IsAI:    false,
-        })
-        m.textInput.SetValue("")
-        m.updateViewport()
       }
       return m, tea.Batch(cmds...)
     }
@@ -215,6 +223,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
       Command: m.aiPrompt,
       Output:  msg.Response,
       IsAI:    true,
+    })
+    m.updateViewport()
+
+  case CommandExecMsg:
+    m.cmdRunning = false
+    var output string
+    if msg.Error != nil {
+      output = fmt.Sprintf("[NLP → %s]\nError: %v\n\n%s", msg.Command, msg.Error, msg.Output)
+    } else if msg.Output != "" {
+      output = msg.Output
+    } else {
+      output = "(no output)"
+    }
+    m.blocks = append(m.blocks, CommandBlock{
+      Command: msg.Command,
+      Output:  output,
+      IsAI:    false,
     })
     m.updateViewport()
 
@@ -245,14 +270,7 @@ func stubAICall(prompt string) tea.Cmd {
   }
 }
 
-// stubCommand simulates command execution
-func stubCommand(cmd string) string {
-  // TODO: Wire up actual shell execution
-  // For now, return stubbed output
-  return fmt.Sprintf("[Stub output for: %s]\n\nWire up PTY/shell execution here.", cmd)
-}
-
-// updateViewport rebuilds the viewport content
+// executeCommand runs a shell command asynchronously
 func (m *Model) updateViewport() {
   if !m.ready {
     return
@@ -302,7 +320,9 @@ func (m Model) View() string {
 
   // Input bar
   var inputPrompt string
-  if m.aiLoading {
+  if m.cmdRunning {
+    inputPrompt = fmt.Sprintf("%s Running... %s", m.spinner.View(), m.textInput.View())
+  } else if m.aiLoading {
     inputPrompt = fmt.Sprintf("%s Thinking... %s", m.spinner.View(), m.textInput.View())
   } else if m.aiMode {
     inputPrompt = fmt.Sprintf("✨ %s", m.textInput.View())
@@ -327,5 +347,38 @@ func main() {
 
   if _, err := p.Run(); err != nil {
     fmt.Printf("Error: %v", err)
+  }
+}
+
+// executeCommand runs a shell command asynchronously
+func executeCommand(originalInput, cmdStr, desc string) tea.Cmd {
+  return func() tea.Msg {
+    var shell, flag string
+    if runtime.GOOS == "windows" {
+      shell = "cmd"
+      flag = "/c"
+    } else {
+      shell = "sh"
+      flag = "-c"
+    }
+
+    cmd := exec.Command(shell, flag, cmdStr)
+    cmd.Dir, _ = os.Getwd()
+
+    output, err := cmd.CombinedOutput()
+
+    // Build the output string
+    var result string
+    if desc != "" {
+      result = fmt.Sprintf("[NLP → %s]\n%s\n\n%s", cmdStr, desc, string(output))
+    } else {
+      result = string(output)
+    }
+
+    return CommandExecMsg{
+      Command: originalInput,
+      Output:  result,
+      Error:   err,
+    }
   }
 }
