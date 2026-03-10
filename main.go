@@ -292,6 +292,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
   case spinner.TickMsg:
     m.spinner, cmd = m.spinner.Update(msg)
     cmds = append(cmds, cmd)
+
+  case tea.MouseMsg:
+    // Handle mouse scroll wheel
+    switch msg.Action {
+    case tea.MouseActionPress:
+      switch msg.Button {
+      case tea.MouseWheelUp:
+        m.viewport.LineUp(3)
+      case tea.MouseWheelDown:
+        m.viewport.LineDown(3)
+      }
+    }
   }
 
   // Update text input
@@ -419,6 +431,7 @@ func main() {
   p := tea.NewProgram(
     InitialModel(),
     tea.WithAltScreen(),
+    tea.WithMouseCellMotion(),
   )
 
   if _, err := p.Run(); err != nil {
