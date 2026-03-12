@@ -1,473 +1,519 @@
 package main
 
 import (
-  "fmt"
-  "os"
-  "os/exec"
-  "runtime"
-  "strings"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"runtime"
+	"strings"
 
-  "github.com/charmbracelet/bubbles/spinner"
-  "github.com/charmbracelet/bubbles/textinput"
-  "github.com/charmbracelet/bubbles/viewport"
-  "github.com/charmbracelet/bubbletea"
-  "github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
+	"github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/creack/pty"
 )
 
 // Warp-inspired dark theme colors
 var (
-  themeBg       = lipgloss.Color("#1a1b26")
-  themeFg       = lipgloss.Color("#c0caf5")
-  themeMuted    = lipgloss.Color("#a9b1d6") // Brighter for visibility
-  themeAccent   = lipgloss.Color("#7aa2f7")
-  themeGreen    = lipgloss.Color("#9ece6a")
-  themeYellow   = lipgloss.Color("#e0af68")
-  themeRed      = lipgloss.Color("#f7768e")
-  themePurple   = lipgloss.Color("#bb9af7")
-  themeBorder   = lipgloss.Color("#3b4261")
-  themeCmdBlock = lipgloss.Color("#24283b")
-  themeInputBg  = lipgloss.Color("#16161e")
+	themeBg       = lipgloss.Color("#1a1b26")
+	themeFg       = lipgloss.Color("#c0caf5")
+	themeMuted    = lipgloss.Color("#a9b1d6") // Brighter for visibility
+	themeAccent   = lipgloss.Color("#7aa2f7")
+	themeGreen    = lipgloss.Color("#9ece6a")
+	themeYellow   = lipgloss.Color("#e0af68")
+	themeRed      = lipgloss.Color("#f7768e")
+	themePurple   = lipgloss.Color("#bb9af7")
+	themeBorder   = lipgloss.Color("#3b4261")
+	themeCmdBlock = lipgloss.Color("#24283b")
+	themeInputBg  = lipgloss.Color("#16161e")
 )
 
 // Styles
 var (
-  titleStyle = lipgloss.NewStyle().
-    Foreground(themeAccent).
-    Bold(true).
-    Padding(0, 1)
+	titleStyle = lipgloss.NewStyle().
+			Foreground(themeAccent).
+			Bold(true).
+			Padding(0, 1)
 
-  cmdBlockStyle = lipgloss.NewStyle().
-    Border(lipgloss.RoundedBorder()).
-    BorderForeground(themeBorder).
-    Padding(0, 1).
-    Margin(0, 1, 1, 1)
+	cmdBlockStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(themeBorder).
+			Padding(0, 1).
+			Margin(0, 1, 1, 1)
 
-  cmdPromptStyle = lipgloss.NewStyle().
-    Foreground(themeGreen).
-    Bold(true)
+	cmdPromptStyle = lipgloss.NewStyle().
+			Foreground(themeGreen).
+			Bold(true)
 
-  cmdInputStyle = lipgloss.NewStyle().
-    Foreground(themeFg)
+	cmdInputStyle = lipgloss.NewStyle().
+			Foreground(themeFg)
 
-  outputStyle = lipgloss.NewStyle().
-    Foreground(themeMuted).
-    Padding(0, 1)
+	outputStyle = lipgloss.NewStyle().
+			Foreground(themeMuted).
+			Padding(0, 1)
 
-  inputContainerStyle = lipgloss.NewStyle().
-    Border(lipgloss.RoundedBorder()).
-    BorderForeground(themeAccent).
-    Padding(0, 1)
+	inputContainerStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(themeAccent).
+				Padding(0, 1)
 
-  helpStyle = lipgloss.NewStyle().
-    Foreground(themeMuted).
-    Padding(0, 1)
+	helpStyle = lipgloss.NewStyle().
+			Foreground(themeMuted).
+			Padding(0, 1)
 
-  aiIndicatorStyle = lipgloss.NewStyle().
-    Foreground(themePurple).
-    Bold(true)
+	aiIndicatorStyle = lipgloss.NewStyle().
+				Foreground(themePurple).
+				Bold(true)
 
-  spinnerStyle = lipgloss.NewStyle().
-    Foreground(themeYellow)
+	spinnerStyle = lipgloss.NewStyle().
+			Foreground(themeYellow)
 )
 
 // CommandBlock represents a command + its output
 type CommandBlock struct {
-  Command string
-  Output  string
-  IsAI    bool
+	Command string
+	Output  string
+	IsAI    bool
 }
 
 // Model is the main application state
 type Model struct {
-  viewport    viewport.Model
-  textInput   textinput.Model
-  spinner     spinner.Model
-  blocks      []CommandBlock
-  ready       bool
-  width       int
-  height      int
-  aiMode      bool
-  aiLoading   bool
-  aiPrompt    string
-  nlpParser   *NLPParser
-  cmdRunning  bool
-  history     []string
-  maxHistory  int
-  showHistory bool
+	viewport    viewport.Model
+	textInput   textinput.Model
+	spinner     spinner.Model
+	blocks      []CommandBlock
+	ready       bool
+	width       int
+	height      int
+	aiMode      bool
+	aiLoading   bool
+	aiPrompt    string
+	nlpParser   *NLPParser
+	cmdRunning  bool
+	history     []string
+	maxHistory  int
+	showHistory bool
 }
 
 // CommandExecMsg is sent when a command finishes executing
 type CommandExecMsg struct {
-  Command string
-  Output  string
-  Error   error
+	Command string
+	Output  string
+	Error   error
 }
 
 // InitialModel creates the initial application state
 func InitialModel() Model {
-  ti := textinput.New()
-  ti.Placeholder = "Type a command or natural language..."
-  ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(themeMuted)
-  ti.PromptStyle = cmdPromptStyle
-  ti.Prompt = "❯ "
-  ti.TextStyle = cmdInputStyle
-  ti.Focus()
+	ti := textinput.New()
+	ti.Placeholder = "Type a command or natural language..."
+	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(themeMuted)
+	ti.PromptStyle = cmdPromptStyle
+	ti.Prompt = "❯ "
+	ti.TextStyle = cmdInputStyle
+	ti.Focus()
 
-  s := spinner.New()
-  s.Spinner = spinner.Dot
-  s.Style = spinnerStyle
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = spinnerStyle
 
-  return Model{
-    textInput: ti,
-    spinner:   s,
-    blocks:   make([]CommandBlock, 0),
-    aiMode:   false,
-    aiLoading: false,
-    nlpParser: NewNLPParser(),
-    history:   make([]string, 0),
-    maxHistory: 1000,
-    showHistory: false,
-  }
+	return Model{
+		textInput:   ti,
+		spinner:     s,
+		blocks:      make([]CommandBlock, 0),
+		aiMode:      false,
+		aiLoading:   false,
+		nlpParser:   NewNLPParser(),
+		history:     make([]string, 0),
+		maxHistory:  1000,
+		showHistory: false,
+	}
 }
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-  return tea.Batch(
-    textinput.Blink,
-    m.spinner.Tick,
-  )
+	return tea.Batch(
+		textinput.Blink,
+		m.spinner.Tick,
+	)
 }
 
 // Update handles events and updates the model
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-  var (
-    cmd  tea.Cmd
-    cmds []tea.Cmd
-  )
+	var (
+		cmd  tea.Cmd
+		cmds []tea.Cmd
+	)
 
-  switch msg := msg.(type) {
-  case tea.KeyMsg:
-    switch msg.Type {
-    case tea.KeyCtrlC:
-      if m.aiMode {
-        m.aiMode = false
-        m.textInput.Prompt = "❯ "
-        m.textInput.Placeholder = "Type a command..."
-        return m, nil
-      }
-      return m, tea.Quit
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			if m.aiMode {
+				m.aiMode = false
+				m.textInput.Prompt = "❯ "
+				m.textInput.Placeholder = "Type a command..."
+				return m, nil
+			}
+			return m, tea.Quit
 
-    case tea.KeyEsc:
-      // Esc only exits AI mode, never quits
-      if m.aiMode {
-        m.aiMode = false
-        m.textInput.Prompt = "❯ "
-        m.textInput.Placeholder = "Type a command..."
-      }
-      return m, nil
+		case tea.KeyEsc:
+			// Esc only exits AI mode, never quits
+			if m.aiMode {
+				m.aiMode = false
+				m.textInput.Prompt = "❯ "
+				m.textInput.Placeholder = "Type a command..."
+			}
+			return m, nil
 
-    case tea.KeyTab:
-      // Tab toggles AI mode
-      m.aiMode = !m.aiMode
-      if m.aiMode {
-        m.textInput.Prompt = "✨ "
-        m.textInput.Placeholder = "Ask AI anything..."
-      } else {
-        m.textInput.Prompt = "❯ "
-        m.textInput.Placeholder = "Type a command..."
-      }
-      return m, nil
+		case tea.KeyTab:
+			// Tab toggles AI mode
+			m.aiMode = !m.aiMode
+			if m.aiMode {
+				m.textInput.Prompt = "✨ "
+				m.textInput.Placeholder = "Ask AI anything..."
+			} else {
+				m.textInput.Prompt = "❯ "
+				m.textInput.Placeholder = "Type a command..."
+			}
+			return m, nil
 
-    case tea.KeyEnter:
-      input := strings.TrimSpace(m.textInput.Value())
-      if input == "" {
-        return m, nil
-      }
+		case tea.KeyEnter:
+			input := strings.TrimSpace(m.textInput.Value())
+			if input == "" {
+				return m, nil
+			}
 
-      // Handle /history command
-      if input == "/history" {
-        m.showHistory = !m.showHistory
-        m.textInput.SetValue("")
-        if m.showHistory {
-          m.updateHistoryView()
-        } else {
-          m.updateViewport()
-        }
-        return m, nil
-      }
+			// Handle /history command
+			if input == "/history" {
+				m.showHistory = !m.showHistory
+				m.textInput.SetValue("")
+				if m.showHistory {
+					m.updateHistoryView()
+				} else {
+					m.updateViewport()
+				}
+				return m, nil
+			}
 
-      // Add to history (unless it's a duplicate of the last entry)
-      if len(m.history) == 0 || m.history[len(m.history)-1] != input {
-        m.history = append(m.history, input)
-        // Trim history if over max
-        if len(m.history) > m.maxHistory {
-          m.history = m.history[len(m.history)-m.maxHistory:]
-        }
-      }
-      m.showHistory = false
+			// Add to history (unless it's a duplicate of the last entry)
+			if len(m.history) == 0 || m.history[len(m.history)-1] != input {
+				m.history = append(m.history, input)
+				// Trim history if over max
+				if len(m.history) > m.maxHistory {
+					m.history = m.history[len(m.history)-m.maxHistory:]
+				}
+			}
+			m.showHistory = false
 
-      if m.aiMode {
-        // AI mode - stub the call
-        m.aiPrompt = input
-        m.aiLoading = true
-        m.textInput.SetValue("")
-        cmds = append(cmds, stubAICall(input))
-      } else {
-        // Try NLP parsing first
-        cmd, matched, desc := m.nlpParser.Parse(input)
-        if matched {
-          // Execute the translated command
-          m.cmdRunning = true
-          m.textInput.SetValue("")
-          return m, executeCommand(input, cmd, desc)
-        } else {
-          // Execute raw command
-          m.cmdRunning = true
-          m.textInput.SetValue("")
-          return m, executeCommand(input, input, "")
-        }
-      }
-      return m, tea.Batch(cmds...)
+			if m.aiMode {
+				// AI mode - stub the call
+				m.aiPrompt = input
+				m.aiLoading = true
+				m.textInput.SetValue("")
+				cmds = append(cmds, stubAICall(input))
+			} else {
+				// Try NLP parsing first
+				cmd, matched, desc := m.nlpParser.Parse(input)
+				if matched {
+					// Execute the translated command
+					m.cmdRunning = true
+					m.textInput.SetValue("")
+					return m, executeCommand(input, cmd, desc)
+				} else {
+					// Execute raw command
+					m.cmdRunning = true
+					m.textInput.SetValue("")
+					return m, executeCommand(input, input, "")
+				}
+			}
+			return m, tea.Batch(cmds...)
 
-    case tea.KeyPgUp:
-      m.viewport.HalfViewUp()
-      return m, nil
+		case tea.KeyPgUp:
+			m.viewport.HalfViewUp()
+			return m, nil
 
-    case tea.KeyPgDown:
-      m.viewport.HalfViewDown()
-      return m, nil
+		case tea.KeyPgDown:
+			m.viewport.HalfViewDown()
+			return m, nil
 
-    case tea.KeyUp:
-      // Scroll up in viewport
-      m.viewport.LineUp(1)
-      return m, nil
+		case tea.KeyUp:
+			// Scroll up in viewport
+			m.viewport.LineUp(1)
+			return m, nil
 
-    case tea.KeyDown:
-      // Scroll down in viewport
-      m.viewport.LineDown(1)
-      return m, nil
-    }
+		case tea.KeyDown:
+			// Scroll down in viewport
+			m.viewport.LineDown(1)
+			return m, nil
+		}
 
-  case tea.WindowSizeMsg:
-    m.width = msg.Width
-    m.height = msg.Height
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
 
-    // Reserve space for input bar (3 lines) and help bar (1 line)
-    viewportHeight := m.height - 4
-    if viewportHeight < 1 {
-      viewportHeight = 1
-    }
+		// Reserve space for input bar (3 lines) and help bar (1 line)
+		viewportHeight := m.height - 4
+		if viewportHeight < 1 {
+			viewportHeight = 1
+		}
 
-    m.viewport = viewport.New(m.width, viewportHeight)
-    m.viewport.Style = lipgloss.NewStyle().Padding(0, 0)
-    m.ready = true
-    m.updateViewport()
+		m.viewport = viewport.New(m.width, viewportHeight)
+		m.viewport.Style = lipgloss.NewStyle().Padding(0, 0)
+		m.ready = true
+		m.updateViewport()
 
-  case AIResponseMsg:
-    m.aiLoading = false
-    m.blocks = append(m.blocks, CommandBlock{
-      Command: m.aiPrompt,
-      Output:  msg.Response,
-      IsAI:    true,
-    })
-    m.updateViewport()
+	case AIResponseMsg:
+		m.aiLoading = false
+		m.blocks = append(m.blocks, CommandBlock{
+			Command: m.aiPrompt,
+			Output:  msg.Response,
+			IsAI:    true,
+		})
+		m.updateViewport()
 
-  case CommandExecMsg:
-    m.cmdRunning = false
-    var output string
-    if msg.Error != nil {
-      output = fmt.Sprintf("[NLP → %s]\nError: %v\n\n%s", msg.Command, msg.Error, msg.Output)
-    } else if msg.Output != "" {
-      output = msg.Output
-    } else {
-      output = "(no output)"
-    }
-    m.blocks = append(m.blocks, CommandBlock{
-      Command: msg.Command,
-      Output:  output,
-      IsAI:    false,
-    })
-    m.updateViewport()
+	case CommandExecMsg:
+		m.cmdRunning = false
+		var output string
+		if msg.Error != nil {
+			output = fmt.Sprintf("[NLP → %s]\nError: %v\n\n%s", msg.Command, msg.Error, msg.Output)
+		} else if msg.Output != "" {
+			output = msg.Output
+		} else {
+			output = "(no output)"
+		}
+		m.blocks = append(m.blocks, CommandBlock{
+			Command: msg.Command,
+			Output:  output,
+			IsAI:    false,
+		})
+		m.updateViewport()
 
-  case spinner.TickMsg:
-    m.spinner, cmd = m.spinner.Update(msg)
-    cmds = append(cmds, cmd)
+	case spinner.TickMsg:
+		m.spinner, cmd = m.spinner.Update(msg)
+		cmds = append(cmds, cmd)
 
-  case tea.MouseMsg:
-    // Handle mouse scroll wheel
-    switch msg.Action {
-    case tea.MouseActionPress:
-      switch msg.Button {
-      case tea.MouseWheelUp:
-        m.viewport.LineUp(3)
-      case tea.MouseWheelDown:
-        m.viewport.LineDown(3)
-      }
-    }
-  }
+	case tea.MouseMsg:
+		// Mouse events - scroll wheel handled via viewport auto-scroll
+	}
 
-  // Update text input
-  m.textInput, cmd = m.textInput.Update(msg)
-  cmds = append(cmds, cmd)
+	// Update text input
+	m.textInput, cmd = m.textInput.Update(msg)
+	cmds = append(cmds, cmd)
 
-  return m, tea.Batch(cmds...)
+	return m, tea.Batch(cmds...)
 }
 
 // AIResponseMsg is sent when AI responds
 type AIResponseMsg struct {
-  Response string
+	Response string
 }
 
 // stubAICall simulates an AI API call
 func stubAICall(prompt string) tea.Cmd {
-  return func() tea.Msg {
-    // TODO: Wire up actual AI API here
-    // For now, return a stubbed response
-    response := fmt.Sprintf("AI Response to: %q\n\n[This is a placeholder - wire up your AI API key here]", prompt)
-    return AIResponseMsg{Response: response}
-  }
+	return func() tea.Msg {
+		// TODO: Wire up actual AI API here
+		// For now, return a stubbed response
+		response := fmt.Sprintf("AI Response to: %q\n\n[This is a placeholder - wire up your AI API key here]", prompt)
+		return AIResponseMsg{Response: response}
+	}
 }
 
 // executeCommand runs a shell command asynchronously
 func (m *Model) updateViewport() {
-  if !m.ready {
-    return
-  }
+	if !m.ready {
+		return
+	}
 
-  var content strings.Builder
+	var content strings.Builder
 
-  for _, block := range m.blocks {
-    var blockContent strings.Builder
+	for _, block := range m.blocks {
+		var blockContent strings.Builder
 
-    // Command line
-    prompt := cmdPromptStyle.Render("❯")
-    if block.IsAI {
-      prompt = aiIndicatorStyle.Render("✨")
-    }
-    cmdLine := fmt.Sprintf("%s %s", prompt, cmdInputStyle.Render(block.Command))
-    blockContent.WriteString(cmdLine + "\n")
+		// Command line
+		prompt := cmdPromptStyle.Render("❯")
+		if block.IsAI {
+			prompt = aiIndicatorStyle.Render("✨")
+		}
+		cmdLine := fmt.Sprintf("%s %s", prompt, cmdInputStyle.Render(block.Command))
+		blockContent.WriteString(cmdLine + "\n")
 
-    // Output
-    if block.Output != "" {
-      blockContent.WriteString(outputStyle.Render(block.Output))
-    }
+		// Output
+		if block.Output != "" {
+			blockContent.WriteString(outputStyle.Render(block.Output))
+		}
 
-    // Wrap in styled block
-    styledBlock := cmdBlockStyle.Render(blockContent.String())
-    content.WriteString(styledBlock + "\n")
-  }
+		// Wrap in styled block
+		styledBlock := cmdBlockStyle.Render(blockContent.String())
+		content.WriteString(styledBlock + "\n")
+	}
 
-  m.viewport.SetContent(content.String())
-  m.viewport.GotoBottom()
+	m.viewport.SetContent(content.String())
+	m.viewport.GotoBottom()
 }
 
 // updateHistoryView shows the command history
 func (m *Model) updateHistoryView() {
-  if !m.ready {
-    return
-  }
+	if !m.ready {
+		return
+	}
 
-  var content strings.Builder
-  content.WriteString(titleStyle.Render("📜 Command History") + "\n\n")
+	var content strings.Builder
+	content.WriteString(titleStyle.Render("📜 Command History") + "\n\n")
 
-  if len(m.history) == 0 {
-    content.WriteString(outputStyle.Render("No commands in history yet."))
-  } else {
-    // Show last 50 commands (or all if less)
-    start := 0
-    if len(m.history) > 50 {
-      start = len(m.history) - 50
-    }
+	if len(m.history) == 0 {
+		content.WriteString(outputStyle.Render("No commands in history yet."))
+	} else {
+		// Show last 50 commands (or all if less)
+		start := 0
+		if len(m.history) > 50 {
+			start = len(m.history) - 50
+		}
 
-    for i := start; i < len(m.history); i++ {
-      num := fmt.Sprintf("%4d", i+1)
-      content.WriteString(fmt.Sprintf("%s  %s\n", cmdPromptStyle.Render(num), cmdInputStyle.Render(m.history[i])))
-    }
+		for i := start; i < len(m.history); i++ {
+			num := fmt.Sprintf("%4d", i+1)
+			content.WriteString(fmt.Sprintf("%s  %s\n", cmdPromptStyle.Render(num), cmdInputStyle.Render(m.history[i])))
+		}
 
-    content.WriteString("\n" + helpStyle.Render(fmt.Sprintf("(%d/%d commands shown)", len(m.history)-start, len(m.history))))
-  }
+		content.WriteString("\n" + helpStyle.Render(fmt.Sprintf("(%d/%d commands shown)", len(m.history)-start, len(m.history))))
+	}
 
-  m.viewport.SetContent(content.String())
-  m.viewport.GotoBottom()
+	m.viewport.SetContent(content.String())
+	m.viewport.GotoBottom()
 }
 
 // View renders the UI
 func (m Model) View() string {
-  if !m.ready {
-    return "\n  Initializing..."
-  }
+	if !m.ready {
+		return "\n  Initializing..."
+	}
 
-  var b strings.Builder
+	var b strings.Builder
 
-  // Title bar
-  title := titleStyle.Render("Warp Clone • Go + Bubble Tea")
-  b.WriteString(title + "\n\n")
+	// Title bar
+	title := titleStyle.Render("Warp Clone • Go + Bubble Tea")
+	b.WriteString(title + "\n\n")
 
-  // Viewport (command blocks)
-  b.WriteString(m.viewport.View() + "\n")
+	// Viewport (command blocks)
+	b.WriteString(m.viewport.View() + "\n")
 
-  // Input bar
-  var inputPrompt string
-  if m.cmdRunning {
-    inputPrompt = fmt.Sprintf("%s Running... %s", m.spinner.View(), m.textInput.View())
-  } else if m.aiLoading {
-    inputPrompt = fmt.Sprintf("%s Thinking... %s", m.spinner.View(), m.textInput.View())
-  } else if m.aiMode {
-    inputPrompt = fmt.Sprintf("✨ %s", m.textInput.View())
-  } else {
-    inputPrompt = m.textInput.View()
-  }
-  inputBar := inputContainerStyle.Width(m.width - 2).Render(inputPrompt)
-  b.WriteString(inputBar + "\n")
+	// Input bar
+	var inputPrompt string
+	if m.cmdRunning {
+		inputPrompt = fmt.Sprintf("%s Running... %s", m.spinner.View(), m.textInput.View())
+	} else if m.aiLoading {
+		inputPrompt = fmt.Sprintf("%s Thinking... %s", m.spinner.View(), m.textInput.View())
+	} else if m.aiMode {
+		inputPrompt = fmt.Sprintf("✨ %s", m.textInput.View())
+	} else {
+		inputPrompt = m.textInput.View()
+	}
+	inputBar := inputContainerStyle.Width(m.width - 2).Render(inputPrompt)
+	b.WriteString(inputBar + "\n")
 
-  // Help bar
-  help := helpStyle.Render("Tab: AI • ↑↓/PgUp/PgDn: Scroll • /history: History • Ctrl+C: Quit")
-  b.WriteString(help)
+	// Help bar
+	help := helpStyle.Render("Tab: AI • ↑↓/PgUp/PgDn: Scroll • /history: History • Ctrl+C: Quit")
+	b.WriteString(help)
 
-  return b.String()
+	return b.String()
 }
 
 func main() {
-  p := tea.NewProgram(
-    InitialModel(),
-    tea.WithAltScreen(),
-    tea.WithMouseCellMotion(),
-  )
+	p := tea.NewProgram(
+		InitialModel(),
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
+	)
 
-  if _, err := p.Run(); err != nil {
-    fmt.Printf("Error: %v", err)
-  }
+	if _, err := p.Run(); err != nil {
+		fmt.Printf("Error: %v", err)
+	}
 }
 
-// executeCommand runs a shell command asynchronously
+// executeCommand runs a shell command asynchronously with PTY support
 func executeCommand(originalInput, cmdStr, desc string) tea.Cmd {
-  return func() tea.Msg {
-    var shell, flag string
-    if runtime.GOOS == "windows" {
-      shell = "cmd"
-      flag = "/c"
-    } else {
-      shell = "sh"
-      flag = "-c"
-    }
+	return func() tea.Msg {
+		var shell, flag string
 
-    cmd := exec.Command(shell, flag, cmdStr)
-    cmd.Dir, _ = os.Getwd()
+		// On Windows, PTY support is limited - fall back to regular exec
+		if runtime.GOOS == "windows" {
+			shell = "cmd"
+			flag = "/c"
+			cmd := exec.Command(shell, flag, cmdStr)
+			cmd.Dir, _ = os.Getwd()
+			output, err := cmd.CombinedOutput()
+			var result string
+			if desc != "" {
+				result = fmt.Sprintf("[NLP → %s]\n%s\n\n%s", cmdStr, desc, string(output))
+			} else {
+				result = string(output)
+			}
+			return CommandExecMsg{
+				Command: originalInput,
+				Output:  result,
+				Error:   err,
+			}
+		}
 
-    output, err := cmd.CombinedOutput()
+		// Unix-like systems: use PTY for proper terminal emulation
+		shell = "sh"
+		flag = "-c"
 
-    // Build the output string
-    var result string
-    if desc != "" {
-      result = fmt.Sprintf("[NLP → %s]\n%s\n\n%s", cmdStr, desc, string(output))
-    } else {
-      result = string(output)
-    }
+		// Create command
+		cmd := exec.Command(shell, flag, cmdStr)
+		cmd.Dir, _ = os.Getwd()
 
-    return CommandExecMsg{
-      Command: originalInput,
-      Output:  result,
-      Error:   err,
-    }
-  }
+		// Start command with PTY
+		ptyFile, err := pty.Start(cmd)
+		if err != nil {
+			// Fall back to regular exec if PTY fails
+			fallbackCmd := exec.Command(shell, flag, cmdStr)
+			fallbackCmd.Dir = cmd.Dir
+			output, fallbackErr := fallbackCmd.CombinedOutput()
+			var result string
+			if desc != "" {
+				result = fmt.Sprintf("[NLP → %s] (PTY unavailable)\n%s\n\n%s", cmdStr, desc, string(output))
+			} else {
+				result = string(output)
+			}
+			return CommandExecMsg{
+				Command: originalInput,
+				Output:  result,
+				Error:   fallbackErr,
+			}
+		}
+		defer ptyFile.Close()
+
+		// Set initial PTY size (use a reasonable default)
+		ws := &pty.Winsize{
+			Cols: 80,
+			Rows: 24,
+		}
+		pty.Setsize(ptyFile, ws)
+
+		// Read output from PTY
+		output, err := io.ReadAll(ptyFile)
+		if err != nil && err != io.EOF {
+			// Read error, but we still have partial output
+		}
+
+		// Wait for command to finish
+		_ = cmd.Wait()
+
+		// Build the output string
+		var result string
+		if desc != "" {
+			result = fmt.Sprintf("[NLP → %s]\n%s\n\n%s", cmdStr, desc, string(output))
+		} else {
+			result = string(output)
+		}
+
+		return CommandExecMsg{
+			Command: originalInput,
+			Output:  result,
+			Error:   nil, // PTY errors are handled above
+		}
+	}
 }

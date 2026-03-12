@@ -6,6 +6,8 @@ require (
 	github.com/charmbracelet/bubbles v0.18.0
 	github.com/charmbracelet/bubbletea v0.26.6
 	github.com/charmbracelet/lipgloss v0.12.1
+	github.com/creack/pty v1.1.24
+	golang.org/x/term v0.6.0
 )
 
 require (
