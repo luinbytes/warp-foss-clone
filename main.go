@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -14,7 +13,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/creack/pty"
 )
 
 // ansiRegex matches ANSI escape sequences for stripping
@@ -39,6 +37,16 @@ var (
 	themeCmdBlock = lipgloss.Color("#24283b")
 	themeInputBg  = lipgloss.Color("#16161e")
 )
+
+// init ensures theme variables are used (config.go references them for overrides)
+func init() {
+	// These variables are used by config.go's ApplyTheme() function
+	// Reference them here to satisfy the linter
+	_ = themeBg
+	_ = themeRed
+	_ = themeCmdBlock
+	_ = themeInputBg
+}
 
 // Styles
 var (
@@ -105,6 +113,7 @@ type Model struct {
 	history     []string
 	maxHistory  int
 	showHistory bool
+	config      Config
 }
 
 // CommandExecMsg is sent when a command finishes executing
@@ -115,7 +124,7 @@ type CommandExecMsg struct {
 }
 
 // InitialModel creates the initial application state
-func InitialModel() Model {
+func InitialModel(config Config) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Type a command or natural language..."
 	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(themeMuted)
@@ -136,8 +145,9 @@ func InitialModel() Model {
 		aiLoading:   false,
 		nlpParser:   NewNLPParser(),
 		history:     make([]string, 0),
-		maxHistory:  1000,
+		maxHistory:  config.MaxHistory,
 		showHistory: false,
+		config:      config,
 	}
 }
 
@@ -305,7 +315,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, cmd)
 
 	case tea.MouseMsg:
-		// Mouse events - scroll wheel handled via viewport auto-scroll
+		// Handle mouse scroll wheel
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.viewport.LineUp(3)
+		case tea.MouseButtonWheelDown:
+			m.viewport.LineDown(3)
+		}
 	}
 
 	// Update text input
@@ -443,8 +459,18 @@ func main() {
 	// Setup console for proper Unicode output (fixes border rendering on Windows)
 	setupConsole()
 
+	// Load configuration
+	config, err := LoadConfig()
+	if err != nil {
+		fmt.Printf("Warning: Failed to load config, using defaults: %v\n", err)
+		config = DefaultConfig()
+	}
+
+	// Apply theme colors from config
+	config.ApplyTheme()
+
 	p := tea.NewProgram(
-		InitialModel(),
+		InitialModel(config),
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)
@@ -454,75 +480,22 @@ func main() {
 	}
 }
 
-// executeCommand runs a shell command asynchronously with PTY support
+// executeCommand runs a shell command asynchronously
 func executeCommand(originalInput, cmdStr, desc string) tea.Cmd {
 	return func() tea.Msg {
 		var shell, flag string
-
-		// On Windows, PTY support is limited - fall back to regular exec
 		if runtime.GOOS == "windows" {
 			shell = "cmd"
 			flag = "/c"
-			cmd := exec.Command(shell, flag, cmdStr)
-			cmd.Dir, _ = os.Getwd()
-			output, err := cmd.CombinedOutput()
-			var result string
-			if desc != "" {
-				result = fmt.Sprintf("[NLP → %s]\n%s\n\n%s", cmdStr, desc, string(output))
-			} else {
-				result = string(output)
-			}
-			return CommandExecMsg{
-				Command: originalInput,
-				Output:  result,
-				Error:   err,
-			}
+		} else {
+			shell = "sh"
+			flag = "-c"
 		}
 
-		// Unix-like systems: use PTY for proper terminal emulation
-		shell = "sh"
-		flag = "-c"
-
-		// Create command
 		cmd := exec.Command(shell, flag, cmdStr)
 		cmd.Dir, _ = os.Getwd()
 
-		// Start command with PTY
-		ptyFile, err := pty.Start(cmd)
-		if err != nil {
-			// Fall back to regular exec if PTY fails
-			fallbackCmd := exec.Command(shell, flag, cmdStr)
-			fallbackCmd.Dir = cmd.Dir
-			output, fallbackErr := fallbackCmd.CombinedOutput()
-			var result string
-			if desc != "" {
-				result = fmt.Sprintf("[NLP → %s] (PTY unavailable)\n%s\n\n%s", cmdStr, desc, string(output))
-			} else {
-				result = string(output)
-			}
-			return CommandExecMsg{
-				Command: originalInput,
-				Output:  result,
-				Error:   fallbackErr,
-			}
-		}
-		defer ptyFile.Close()
-
-		// Set initial PTY size (use a reasonable default)
-		ws := &pty.Winsize{
-			Cols: 80,
-			Rows: 24,
-		}
-		pty.Setsize(ptyFile, ws)
-
-		// Read output from PTY
-		output, err := io.ReadAll(ptyFile)
-		if err != nil && err != io.EOF {
-			// Read error, but we still have partial output
-		}
-
-		// Wait for command to finish
-		_ = cmd.Wait()
+		output, err := cmd.CombinedOutput()
 
 		// Build the output string
 		var result string
@@ -535,7 +508,7 @@ func executeCommand(originalInput, cmdStr, desc string) tea.Cmd {
 		return CommandExecMsg{
 			Command: originalInput,
 			Output:  result,
-			Error:   nil, // PTY errors are handled above
+			Error:   err,
 		}
 	}
 }
