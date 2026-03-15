@@ -80,6 +80,19 @@ func (p *NLPParser) setupPatterns() {
 	p.addPattern(`set (?:variable )?(.+) (?:to|equal|=) (.+)`, p.cmdSetVar, "Set environment variable", false, "environment")
 	p.addPattern(`show variable (.+)`, p.cmdShowVar, "Show environment variable", true, "environment")
 
+	// Git patterns
+	p.addPattern(`git init`, p.cmdGitInit, "Initialize git repository", true, "git")
+	p.addPattern(`git status`, p.cmdGitStatus, "Show git status", true, "git")
+	p.addPattern(`git log`, p.cmdGitLog, "Show commit history", true, "git")
+	p.addPattern(`git (?:clone|download) (.+)`, p.cmdGitClone, "Clone repository", true, "git")
+	p.addPattern(`git add (?:all|.)`, p.cmdGitAddAll, "Stage all changes", true, "git")
+	p.addPattern(`git add (.+)`, p.cmdGitAdd, "Stage file", true, "git")
+	p.addPattern(`git commit`, p.cmdGitCommit, "Commit changes", true, "git")
+	p.addPattern(`git push`, p.cmdGitPush, "Push to remote", false, "git")
+	p.addPattern(`git pull`, p.cmdGitPull, "Pull from remote", false, "git")
+	p.addPattern(`git branch`, p.cmdGitBranch, "Show branches", true, "git")
+	p.addPattern(`git checkout (.+)`, p.cmdGitCheckout, "Switch branch", true, "git")
+
 	// Network patterns
 	p.addPattern(`ping (.+)`, p.cmdPing, "Ping host", true, "network")
 	p.addPattern(`trace route to (.+)`, p.cmdTraceRoute, "Trace route to host", true, "network")
@@ -375,6 +388,65 @@ func (p *NLPParser) cmdShowVar(re *regexp.Regexp, input string) string {
 			return fmt.Sprintf("echo %%%s%%", name)
 		}
 		return fmt.Sprintf("echo $%s", name)
+	}
+	return ""
+}
+
+func (p *NLPParser) cmdGitInit(re *regexp.Regexp, input string) string {
+	return "git init"
+}
+
+func (p *NLPParser) cmdGitStatus(re *regexp.Regexp, input string) string {
+	return "git status"
+}
+
+func (p *NLPParser) cmdGitLog(re *regexp.Regexp, input string) string {
+	return "git log --oneline -10"
+}
+
+func (p *NLPParser) cmdGitClone(re *regexp.Regexp, input string) string {
+	matches := re.FindStringSubmatch(input)
+	if len(matches) > 1 {
+		url := strings.TrimSpace(matches[1])
+		return fmt.Sprintf("git clone %s", url)
+	}
+	return ""
+}
+
+func (p *NLPParser) cmdGitAddAll(re *regexp.Regexp, input string) string {
+	return "git add ."
+}
+
+func (p *NLPParser) cmdGitAdd(re *regexp.Regexp, input string) string {
+	matches := re.FindStringSubmatch(input)
+	if len(matches) > 1 {
+		file := strings.TrimSpace(matches[1])
+		return fmt.Sprintf("git add %s", file)
+	}
+	return ""
+}
+
+func (p *NLPParser) cmdGitCommit(re *regexp.Regexp, input string) string {
+	return "git commit"
+}
+
+func (p *NLPParser) cmdGitPush(re *regexp.Regexp, input string) string {
+	return "git push"
+}
+
+func (p *NLPParser) cmdGitPull(re *regexp.Regexp, input string) string {
+	return "git pull"
+}
+
+func (p *NLPParser) cmdGitBranch(re *regexp.Regexp, input string) string {
+	return "git branch"
+}
+
+func (p *NLPParser) cmdGitCheckout(re *regexp.Regexp, input string) string {
+	matches := re.FindStringSubmatch(input)
+	if len(matches) > 1 {
+		branch := strings.TrimSpace(matches[1])
+		return fmt.Sprintf("git checkout %s", branch)
 	}
 	return ""
 }
