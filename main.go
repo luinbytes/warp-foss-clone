@@ -23,6 +23,28 @@ func stripANSI(s string) string {
 	return ansiRegex.ReplaceAllString(s, "")
 }
 
+// Platform-safe prompt symbols to avoid Unicode width issues on Windows
+func safePrompt() string {
+	if runtime.GOOS == "windows" {
+		return ">"
+	}
+	return "\u276f"
+}
+
+func safeAIPrompt() string {
+	if runtime.GOOS == "windows" {
+		return "*"
+	}
+	return "\u2728"
+}
+
+func safeHistoryIcon() string {
+	if runtime.GOOS == "windows" {
+		return "#"
+	}
+	return "\U0001f4dc"
+}
+
 // Warp-inspired dark theme colors
 var (
 	themeBg       = lipgloss.Color("#1a1b26")
@@ -45,7 +67,7 @@ func init() {
 	_ = themeInputBg
 }
 
-// Styles — initialized in initStyles() after setupConsole() runs
+// Styles -- initialized in initStyles() after setupConsole() runs
 var (
 	titleStyle          lipgloss.Style
 	cmdBlockStyle       lipgloss.Style
@@ -142,7 +164,7 @@ func InitialModel(config Config) Model {
 	ti.Placeholder = "Type a command or natural language..."
 	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(themeMuted)
 	ti.PromptStyle = cmdPromptStyle
-	ti.Prompt = "❯ "
+	ti.Prompt = safePrompt() + " "
 	ti.TextStyle = cmdInputStyle
 	ti.Focus()
 
@@ -190,37 +212,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlC:
 			if m.aiMode {
 				m.aiMode = false
-				m.textInput.Prompt = "❯ "
+				m.textInput.Prompt = safePrompt() + " "
 				m.textInput.Placeholder = "Type a command..."
 				return m, nil
 			}
 			return m, tea.Quit
-
 		case tea.KeyEsc:
 			if m.aiMode {
 				m.aiMode = false
-				m.textInput.Prompt = "❯ "
+				m.textInput.Prompt = safePrompt() + " "
 				m.textInput.Placeholder = "Type a command..."
 			}
 			return m, nil
-
 		case tea.KeyTab:
 			m.aiMode = !m.aiMode
 			if m.aiMode {
-				m.textInput.Prompt = "✨ "
+				m.textInput.Prompt = safeAIPrompt() + " "
 				m.textInput.Placeholder = "Ask AI anything..."
 			} else {
-				m.textInput.Prompt = "❯ "
+				m.textInput.Prompt = safePrompt() + " "
 				m.textInput.Placeholder = "Type a command..."
 			}
 			return m, nil
-
 		case tea.KeyEnter:
 			input := strings.TrimSpace(m.textInput.Value())
 			if input == "" {
 				return m, nil
 			}
-
 			if input == "/history" {
 				m.showHistory = !m.showHistory
 				m.textInput.SetValue("")
@@ -231,7 +249,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-
 			if len(m.history) == 0 || m.history[len(m.history)-1] != input {
 				m.history = append(m.history, input)
 				if len(m.history) > m.maxHistory {
@@ -240,7 +257,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				_ = appendToHistory(input, m.config)
 			}
 			m.showHistory = false
-
 			if m.aiMode {
 				m.aiPrompt = input
 				m.aiLoading = true
@@ -259,19 +275,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, tea.Batch(cmds...)
-
 		case tea.KeyPgUp:
 			m.viewport.HalfViewUp()
 			return m, nil
-
 		case tea.KeyPgDown:
 			m.viewport.HalfViewDown()
 			return m, nil
-
 		case tea.KeyUp:
 			m.viewport.LineUp(1)
 			return m, nil
-
 		case tea.KeyDown:
 			m.viewport.LineDown(1)
 			return m, nil
@@ -280,12 +292,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-
 		viewportHeight := m.height - 4
 		if viewportHeight < 1 {
 			viewportHeight = 1
 		}
-
 		m.viewport = viewport.New(m.width, viewportHeight)
 		m.viewport.Style = lipgloss.NewStyle().Padding(0, 0)
 		m.ready = true
@@ -304,7 +314,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cmdRunning = false
 		var output string
 		if msg.Error != nil {
-			output = fmt.Sprintf("[NLP → %s]\nError: %v\n\n%s", msg.Command, msg.Error, msg.Output)
+			output = fmt.Sprintf("[NLP -> %s]\nError: %v\n\n%s", msg.Command, msg.Error, msg.Output)
 		} else if msg.Output != "" {
 			output = msg.Output
 		} else {
@@ -361,13 +371,12 @@ func (m *Model) updateViewport() {
 	}
 
 	var content strings.Builder
-
 	for _, block := range m.blocks {
 		var blockContent strings.Builder
 
-		prompt := cmdPromptStyle.Render("❯")
+		prompt := cmdPromptStyle.Render(safePrompt())
 		if block.IsAI {
-			prompt = aiIndicatorStyle.Render("✨")
+			prompt = aiIndicatorStyle.Render(safeAIPrompt())
 		}
 		cmdLine := fmt.Sprintf("%s %s", prompt, cmdInputStyle.Render(block.Command))
 		blockContent.WriteString(cmdLine + "\n")
@@ -392,7 +401,7 @@ func (m *Model) updateHistoryView() {
 	}
 
 	var content strings.Builder
-	content.WriteString(titleStyle.Render("📜 Command History") + "\n\n")
+	content.WriteString(titleStyle.Render(safeHistoryIcon() + " Command History") + "\n\n")
 
 	if len(m.history) == 0 {
 		content.WriteString(outputStyle.Render("No commands in history yet."))
@@ -403,7 +412,7 @@ func (m *Model) updateHistoryView() {
 		}
 		for i := start; i < len(m.history); i++ {
 			num := fmt.Sprintf("%4d", i+1)
-			content.WriteString(fmt.Sprintf("%s  %s\n", cmdPromptStyle.Render(num), cmdInputStyle.Render(m.history[i])))
+			content.WriteString(fmt.Sprintf("%s %s\n", cmdPromptStyle.Render(num), cmdInputStyle.Render(m.history[i])))
 		}
 		content.WriteString("\n" + helpStyle.Render(fmt.Sprintf("(%d/%d commands shown)", len(m.history)-start, len(m.history))))
 	}
@@ -420,9 +429,8 @@ func (m Model) View() string {
 
 	var b strings.Builder
 
-	title := titleStyle.Render("wterm • Go + Bubble Tea")
+	title := titleStyle.Render("wterm -- Go + Bubble Tea")
 	b.WriteString(title + "\n\n")
-
 	b.WriteString(m.viewport.View() + "\n")
 
 	var inputPrompt string
@@ -431,14 +439,15 @@ func (m Model) View() string {
 	} else if m.aiLoading {
 		inputPrompt = fmt.Sprintf("%s Thinking... %s", m.spinner.View(), m.textInput.View())
 	} else if m.aiMode {
-		inputPrompt = fmt.Sprintf("✨ %s", m.textInput.View())
+		inputPrompt = fmt.Sprintf("%s %s", safeAIPrompt(), m.textInput.View())
 	} else {
 		inputPrompt = m.textInput.View()
 	}
+
 	inputBar := inputContainerStyle.Width(m.width - 2).Render(inputPrompt)
 	b.WriteString(inputBar + "\n")
 
-	help := helpStyle.Render("Tab: AI • ↑↓/PgUp/PgDn: Scroll • /history: History • Ctrl+C: Quit")
+	help := helpStyle.Render("Tab: AI -- Up/Down/PgUp/PgDn: Scroll -- /history: History -- Ctrl+C: Quit")
 	b.WriteString(help)
 
 	return b.String()
@@ -454,7 +463,6 @@ func main() {
 		fmt.Printf("Warning: Failed to load config, using defaults: %v\n", err)
 		config = DefaultConfig()
 	}
-
 	config.ApplyTheme()
 
 	initialModel := InitialModel(config)
@@ -490,12 +498,11 @@ func executeCommand(originalInput, cmdStr, desc string) tea.Cmd {
 
 		cmd := exec.Command(shell, flag, cmdStr)
 		cmd.Dir, _ = os.Getwd()
-
 		output, err := cmd.CombinedOutput()
 
 		var result string
 		if desc != "" {
-			result = fmt.Sprintf("[NLP → %s]\n%s\n\n%s", cmdStr, desc, string(output))
+			result = fmt.Sprintf("[NLP -> %s]\n%s\n\n%s", cmdStr, desc, string(output))
 		} else {
 			result = string(output)
 		}
