@@ -405,8 +405,12 @@ func (m *Model) updateViewport() {
 		blockContent.WriteString(cmdLine + "\n")
 
 		if block.Output != "" {
-			cleanOutput := wrapText(stripANSI(block.Output), blockWidth-8)
-			blockContent.WriteString(outputStyle.Render(cleanOutput))
+			cleanOutput := wrapText(strings.TrimSpace(stripANSI(block.Output)), blockWidth-8)
+			if runtime.GOOS == "windows" {
+				blockContent.WriteString(cleanOutput)
+			} else {
+				blockContent.WriteString(outputStyle.Render(cleanOutput))
+			}
 		}
 
 				var styledBlock string
