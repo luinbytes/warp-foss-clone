@@ -136,6 +136,18 @@
             pointer-events: none;
         }
 
+        .hero::before {
+            content: '';
+            position: absolute;
+            top: 20%;
+            left: -20%;
+            width: 60%;
+            height: 60%;
+            background: radial-gradient(circle, var(--glow-neon) 0%, transparent 70%);
+            filter: blur(60px);
+            pointer-events: none;
+        }
+
         .hero::after {
             content: '';
             position: absolute;
@@ -537,6 +549,163 @@
         .float-animation {
             animation: float 6s ease-in-out infinite;
         }
+
+        /* Scroll Animations */
+        .reveal {
+            opacity: 0;
+            transform: translateY(40px);
+            transition: all 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .reveal.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .reveal-left {
+            opacity: 0;
+            transform: translateX(-60px);
+            transition: all 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .reveal-left.active {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .reveal-right {
+            opacity: 0;
+            transform: translateX(60px);
+            transition: all 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .reveal-right.active {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        .reveal-scale {
+            opacity: 0;
+            transform: scale(0.8);
+            transition: all 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .reveal-scale.active {
+            opacity: 1;
+            transform: scale(1);
+        }
+
+        /* Staggered animations for grid items */
+        .feature-card {
+            opacity: 0;
+            transform: translateY(40px);
+            transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .feature-card.active {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* Stack items animation */
+        .stack-item {
+            opacity: 0;
+            transform: translateY(30px) scale(0.9);
+            transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .stack-item.active {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
+
+        /* Parallax scroll effect */
+        .parallax-slow {
+            transition: transform 0.1s linear;
+        }
+
+        .parallax-medium {
+            transition: transform 0.05s linear;
+        }
+
+        /* Glow pulse on scroll */
+        @keyframes glow-pulse {
+            0%, 100% {
+                box-shadow: 0 0 20px rgba(244, 114, 182, 0.3);
+            }
+            50% {
+                box-shadow: 0 0 40px rgba(244, 114, 182, 0.6);
+            }
+        }
+
+        .glow-active {
+            animation: glow-pulse 2s ease-in-out infinite;
+        }
+
+        /* Typewriter cursor effect */
+        @keyframes typewriter {
+            from { width: 0; }
+            to { width: 100%; }
+        }
+
+        @keyframes blink-caret {
+            from, to { border-color: transparent; }
+            50% { border-color: var(--neon); }
+        }
+
+        /* Progress bar animation */
+        @keyframes progress {
+            0% { width: 0%; }
+            100% { width: 100%; }
+        }
+
+        .progress-bar {
+            height: 3px;
+            background: linear-gradient(90deg, var(--neon), var(--accent-purple));
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        /* Terminal scanline effect */
+        .scanline {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .scanline::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(244, 114, 182, 0.5), transparent);
+            animation: scanline-scroll 3s linear infinite;
+        }
+
+        @keyframes scanline-scroll {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100%); }
+        }
+
+        /* Magnetic button effect */
+        .btn-magnetic {
+            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .btn-magnetic:hover {
+            transform: scale(1.05);
+        }
+
+        /* Section fade animations */
+        .section-fade {
+            opacity: 0;
+            transition: opacity 1s ease;
+        }
+
+        .section-fade.active {
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
@@ -555,7 +724,7 @@
     <!-- Hero Section -->
     <section class="hero">
         <div class="container">
-            <div class="hero-content">
+            <div class="hero-content reveal-left">
                 <div class="hero-badge">
                     <span class="status-dot"></span>
                     Early Development
@@ -563,20 +732,20 @@
                 <h1>The terminal you <span class="highlight">deserve</span></h1>
                 <p>A <span class="accent">Warp-inspired</span> terminal emulator. Fast, modern, AI-ready. Built with Go + Bubble Tea. Single binary, zero deps.</p>
                 <div class="hero-buttons">
-                    <a href="https://github.com/luinbytes/warp-foss-clone" target="_blank" class="btn btn-primary">
+                    <a href="https://github.com/luinbytes/warp-foss-clone" target="_blank" class="btn btn-primary btn-magnetic">
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                             <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61-.546-1.385-1.335-1.755-1.335-1.755-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.605-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12"/>
                         </svg>
                         View on GitHub
                     </a>
-                    <a href="#features" class="btn btn-secondary">
+                    <a href="#features" class="btn btn-secondary btn-magnetic">
                         Learn More
                     </a>
                 </div>
             </div>
 
             <!-- Terminal Preview -->
-            <div class="terminal-preview float-animation">
+            <div class="terminal-preview float-animation reveal-right scanline">
                 <div class="terminal-window">
                     <div class="terminal-header">
                         <span class="terminal-dot red"></span>
@@ -612,7 +781,7 @@
     <!-- Features Section -->
     <section class="features" id="features">
         <div class="container">
-            <div class="section-header">
+            <div class="section-header reveal">
                 <h2>Why wterm?</h2>
                 <p>Because you deserve a terminal that's as fast and modern as your workflow.</p>
             </div>
@@ -654,7 +823,7 @@
     <!-- Stack Section -->
     <section class="stack" id="stack">
         <div class="container">
-            <div class="section-header">
+            <div class="section-header reveal">
                 <h2>Built With</h2>
                 <p>Modern tools for a modern terminal.</p>
             </div>
@@ -682,10 +851,10 @@
     <!-- CTA Section -->
     <section class="cta">
         <div class="container">
-            <div class="cta-content">
+            <div class="cta-content reveal-scale">
                 <h2>Ready to upgrade?</h2>
                 <p>Clone it. Build it. Run it. Your new favorite terminal awaits.</p>
-                <a href="https://github.com/luinbytes/warp-foss-clone" target="_blank" class="btn btn-primary">
+                <a href="https://github.com/luinbytes/warp-foss-clone" target="_blank" class="btn btn-primary btn-magnetic">
                     Get Started on GitHub
                 </a>
             </div>
@@ -698,5 +867,158 @@
             <p>Built by <a href="https://luinbytes.dev" target="_blank">luinbytes</a> · Open Source · MIT License</p>
         </div>
     </footer>
+
+    <!-- Scroll Animation Script -->
+    <script>
+        // Scroll reveal animations
+        const observerOptions = {
+            root: null,
+            rootMargin: '0px',
+            threshold: 0.1
+        };
+
+        const revealObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    entry.target.classList.add('active');
+                }
+            });
+        }, observerOptions);
+
+        // Observe all reveal elements
+        document.querySelectorAll('.reveal, .reveal-left, .reveal-right, .reveal-scale').forEach(el => {
+            revealObserver.observe(el);
+        });
+
+        // Staggered animation for feature cards
+        const featureCards = document.querySelectorAll('.feature-card');
+        const featureObserver = new IntersectionObserver((entries) => {
+            entries.forEach((entry, index) => {
+                if (entry.isIntersecting) {
+                    setTimeout(() => {
+                        entry.target.classList.add('active');
+                    }, index * 100);
+                }
+            });
+        }, { threshold: 0.1 });
+
+        featureCards.forEach(card => {
+            featureObserver.observe(card);
+        });
+
+        // Staggered animation for stack items
+        const stackItems = document.querySelectorAll('.stack-item');
+        const stackObserver = new IntersectionObserver((entries) => {
+            entries.forEach((entry, index) => {
+                if (entry.isIntersecting) {
+                    setTimeout(() => {
+                        entry.target.classList.add('active');
+                    }, index * 150);
+                }
+            });
+        }, { threshold: 0.2 });
+
+        stackItems.forEach(item => {
+            stackObserver.observe(item);
+        });
+
+        // Parallax effect on scroll
+        let ticking = false;
+        window.addEventListener('scroll', () => {
+            if (!ticking) {
+                window.requestAnimationFrame(() => {
+                    const scrolled = window.pageYOffset;
+
+                    // Parallax for hero elements
+                    document.querySelectorAll('.parallax-slow').forEach(el => {
+                        el.style.transform = `translateY(${scrolled * 0.3}px)`;
+                    });
+
+                    document.querySelectorAll('.parallax-medium').forEach(el => {
+                        el.style.transform = `translateY(${scrolled * 0.5}px)`;
+                    });
+
+                    // Glowing effect intensity based on scroll
+                    const glowIntensity = Math.min(scrolled / 500, 1);
+                    document.querySelectorAll('.glow-active').forEach(el => {
+                        el.style.boxShadow = `0 0 ${20 + glowIntensity * 30}px rgba(244, 114, 182, ${0.3 + glowIntensity * 0.4})`;
+                    });
+
+                    ticking = false;
+                });
+
+                ticking = true;
+            }
+        });
+
+        // Progress bar for page scroll
+        const progressBar = document.createElement('div');
+        progressBar.className = 'progress-bar';
+        progressBar.style.cssText = 'position: fixed; top: 0; left: 0; z-index: 1000;';
+        document.body.appendChild(progressBar);
+
+        window.addEventListener('scroll', () => {
+            const winScroll = document.body.scrollTop || document.documentElement.scrollTop;
+            const height = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+            const scrolled = (winScroll / height) * 100;
+            progressBar.style.width = scrolled + '%';
+        });
+
+        // Magnetic button effect
+        document.querySelectorAll('.btn').forEach(btn => {
+            btn.addEventListener('mousemove', (e) => {
+                const rect = btn.getBoundingClientRect();
+                const x = e.clientX - rect.left - rect.width / 2;
+                const y = e.clientY - rect.top - rect.height / 2;
+
+                btn.style.transform = `translate(${x * 0.1}px, ${y * 0.1}px) scale(1.05)`;
+            });
+
+            btn.addEventListener('mouseleave', () => {
+                btn.style.transform = 'translate(0, 0) scale(1)';
+            });
+        });
+
+        // Smooth scroll for navigation links
+        document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+            anchor.addEventListener('click', function (e) {
+                e.preventDefault();
+                const target = document.querySelector(this.getAttribute('href'));
+                if (target) {
+                    target.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start'
+                    });
+                }
+            });
+        });
+
+        // Terminal typing effect on scroll
+        const terminalLines = document.querySelectorAll('.terminal-line');
+        const terminalObserver = new IntersectionObserver((entries) => {
+            entries.forEach((entry) => {
+                if (entry.isIntersecting) {
+                    const command = entry.target.querySelector('.command');
+                    if (command) {
+                        const text = command.textContent;
+                        command.textContent = '';
+                        let i = 0;
+                        const typeWriter = () => {
+                            if (i < text.length) {
+                                command.textContent += text.charAt(i);
+                                i++;
+                                setTimeout(typeWriter, 30);
+                            }
+                        };
+                        typeWriter();
+                    }
+                }
+            });
+        }, { threshold: 0.5 });
+
+        terminalLines.forEach(line => {
+            terminalObserver.observe(line);
+        });
+    </script>
 </body>
 </html>
