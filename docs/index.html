@@ -48,6 +48,7 @@
             color: var(--text-primary);
             line-height: 1.6;
             overflow-x: hidden;
+            -webkit-tap-highlight-color: transparent;
         }
 
         .container {
@@ -84,6 +85,7 @@
             display: flex;
             align-items: center;
             gap: 8px;
+            -webkit-tap-highlight-color: transparent;
         }
 
         .logo::before {
@@ -104,10 +106,108 @@
             color: var(--text-secondary);
             text-decoration: none;
             transition: color 0.2s;
+            padding: 8px 12px;
+            border-radius: 4px;
+            min-height: 44px;
+            display: flex;
+            align-items: center;
+            -webkit-tap-highlight-color: transparent;
         }
 
         .nav-links a:hover {
             color: var(--neon);
+            background: rgba(244, 114, 182, 0.1);
+        }
+
+        /* Hamburger Menu Button */
+        .hamburger {
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            width: 48px;
+            height: 48px;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            padding: 8px;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .hamburger span {
+            display: block;
+            width: 28px;
+            height: 2px;
+            background: var(--text-primary);
+            margin: 4px 0;
+            transition: all 0.3s ease;
+            border-radius: 2px;
+        }
+
+        .hamburger.active span:nth-child(1) {
+            transform: rotate(45deg) translate(6px, 6px);
+        }
+
+        .hamburger.active span:nth-child(2) {
+            opacity: 0;
+            transform: translateX(-20px);
+        }
+
+        .hamburger.active span:nth-child(3) {
+            transform: rotate(-45deg) translate(6px, -6px);
+        }
+
+        /* Mobile Menu */
+        .mobile-menu {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(10, 10, 10, 0.98);
+            backdrop-filter: blur(10px);
+            z-index: 99;
+            padding: 80px 24px 24px;
+            flex-direction: column;
+            gap: 24px;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        .mobile-menu.active {
+            display: flex;
+        }
+
+        .mobile-menu a {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.25rem;
+            color: var(--text-primary);
+            text-decoration: none;
+            padding: 16px;
+            border-radius: 8px;
+            transition: all 0.2s;
+            text-align: center;
+            min-height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        .mobile-menu a:hover {
+            background: rgba(244, 114, 182, 0.1);
+            color: var(--neon);
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-100%);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
         }
 
         @keyframes blink {
@@ -169,12 +269,12 @@
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            padding: 6px 14px;
+            padding: 8px 16px;
             background: var(--bg-secondary);
             border: 1px solid var(--border-color);
             border-radius: 100px;
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.75rem;
+            font-size: 0.875rem;
             color: var(--text-secondary);
             margin-bottom: 24px;
         }
@@ -206,7 +306,7 @@
         }
 
         .hero p {
-            font-size: 1.25rem;
+            font-size: 1.125rem;
             color: var(--text-secondary);
             max-width: 600px;
             margin-bottom: 40px;
@@ -225,8 +325,9 @@
         .btn {
             display: inline-flex;
             align-items: center;
+            justify-content: center;
             gap: 8px;
-            padding: 14px 28px;
+            padding: 16px 32px;
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.9rem;
             font-weight: 600;
@@ -235,6 +336,8 @@
             transition: all 0.3s ease;
             cursor: pointer;
             border: none;
+            min-height: 48px;
+            -webkit-tap-highlight-color: transparent;
         }
 
         .btn-primary {
@@ -305,25 +408,30 @@
             font-family: 'JetBrains Mono', monospace;
             font-size: 0.875rem;
             line-height: 1.8;
+            overflow-x: auto;
         }
 
         .terminal-line {
             display: flex;
             gap: 12px;
             margin-bottom: 8px;
+            min-width: 0;
         }
 
         .prompt {
             color: var(--neon);
+            flex-shrink: 0;
         }
 
         .command {
             color: var(--text-primary);
+            word-break: break-all;
         }
 
         .output {
             color: var(--text-secondary);
             padding-left: 20px;
+            word-break: break-word;
         }
 
         .output .success {
@@ -342,7 +450,7 @@
 
         /* Features Section */
         .features {
-            padding: 120px 0;
+            padding: 80px 0;
         }
 
         .section-header {
@@ -352,21 +460,21 @@
 
         .section-header h2 {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 2.5rem;
+            font-size: 2rem;
             font-weight: 700;
             margin-bottom: 16px;
         }
 
         .section-header p {
             color: var(--text-secondary);
-            font-size: 1.1rem;
+            font-size: 1rem;
             max-width: 600px;
             margin: 0 auto;
         }
 
         .features-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 24px;
         }
 
@@ -410,7 +518,7 @@
         .stack-grid {
             display: flex;
             justify-content: center;
-            gap: 48px;
+            gap: 32px;
             flex-wrap: wrap;
             margin-top: 48px;
         }
@@ -448,7 +556,7 @@
 
         /* CTA Section */
         .cta {
-            padding: 120px 0;
+            padding: 80px 0;
             text-align: center;
             position: relative;
         }
@@ -473,14 +581,14 @@
 
         .cta h2 {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 2.5rem;
+            font-size: 2rem;
             font-weight: 700;
             margin-bottom: 16px;
         }
 
         .cta p {
             color: var(--text-secondary);
-            font-size: 1.1rem;
+            font-size: 1rem;
             margin-bottom: 32px;
             max-width: 500px;
             margin-left: auto;
@@ -503,6 +611,10 @@
         footer a {
             color: var(--neon);
             text-decoration: none;
+            min-height: 44px;
+            display: inline-flex;
+            align-items: center;
+            -webkit-tap-highlight-color: transparent;
         }
 
         footer a:hover {
@@ -511,12 +623,24 @@
 
         /* Responsive */
         @media (max-width: 768px) {
+            .hamburger {
+                display: flex;
+            }
+
             .nav-links {
                 display: none;
             }
 
+            .mobile-menu {
+                display: none;
+            }
+
+            .mobile-menu.active {
+                display: flex;
+            }
+
             .hero h1 {
-                font-size: 2.5rem;
+                font-size: 2rem;
             }
 
             .hero p {
@@ -525,18 +649,67 @@
 
             .hero-buttons {
                 flex-direction: column;
+                width: 100%;
             }
 
             .btn {
-                justify-content: center;
+                width: 100%;
             }
 
             .section-header h2 {
-                font-size: 2rem;
+                font-size: 1.75rem;
+            }
+
+            .section-header p {
+                font-size: 0.9rem;
             }
 
             .stack-grid {
-                gap: 32px;
+                gap: 24px;
+            }
+
+            .stack-item {
+                flex: 0 0 calc(50% - 12px);
+            }
+
+            .features {
+                padding: 60px 0;
+            }
+
+            .stack {
+                padding: 60px 0;
+            }
+
+            .cta {
+                padding: 60px 0;
+            }
+
+            .terminal-window {
+                border-radius: 8px;
+            }
+
+            .terminal-body {
+                padding: 16px;
+                font-size: 0.75rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .container {
+                padding: 0 16px;
+            }
+
+            .hero-badge {
+                font-size: 0.75rem;
+                padding: 6px 12px;
+            }
+
+            .stack-item {
+                flex: 0 0 100%;
+            }
+
+            .features-grid {
+                grid-template-columns: 1fr;
             }
         }
 
@@ -706,6 +879,14 @@
         .section-fade.active {
             opacity: 1;
         }
+
+        /* Prevent text selection on touch devices for better tap experience */
+        @media (hover: none) and (pointer: coarse) {
+            .btn, .nav-links a, .mobile-menu a, .logo, footer a {
+                -webkit-touch-callout: none;
+                user-select: none;
+            }
+        }
     </style>
 </head>
 <body>
@@ -718,8 +899,20 @@
                 <li><a href="#stack">Stack</a></li>
                 <li><a href="https://github.com/luinbytes/warp-foss-clone" target="_blank">GitHub</a></li>
             </ul>
+            <button class="hamburger" aria-label="Toggle menu" aria-expanded="false">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
         </div>
     </nav>
+
+    <!-- Mobile Menu -->
+    <div class="mobile-menu" aria-hidden="true">
+        <a href="#features" data-close-menu>Features</a>
+        <a href="#stack" data-close-menu>Stack</a>
+        <a href="https://github.com/luinbytes/warp-foss-clone" target="_blank">GitHub</a>
+    </div>
 
     <!-- Hero Section -->
     <section class="hero">
@@ -870,6 +1063,41 @@
 
     <!-- Scroll Animation Script -->
     <script>
+        // Mobile menu toggle
+        const hamburger = document.querySelector('.hamburger');
+        const mobileMenu = document.querySelector('.mobile-menu');
+        const closeMenuLinks = document.querySelectorAll('[data-close-menu]');
+
+        hamburger.addEventListener('click', () => {
+            hamburger.classList.toggle('active');
+            mobileMenu.classList.toggle('active');
+            const isExpanded = hamburger.classList.contains('active');
+            hamburger.setAttribute('aria-expanded', isExpanded);
+            mobileMenu.setAttribute('aria-hidden', !isExpanded);
+            document.body.style.overflow = isExpanded ? 'hidden' : '';
+        });
+
+        closeMenuLinks.forEach(link => {
+            link.addEventListener('click', () => {
+                hamburger.classList.remove('active');
+                mobileMenu.classList.remove('active');
+                hamburger.setAttribute('aria-expanded', 'false');
+                mobileMenu.setAttribute('aria-hidden', 'true');
+                document.body.style.overflow = '';
+            });
+        });
+
+        // Close menu when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!mobileMenu.contains(e.target) && !hamburger.contains(e.target)) {
+                hamburger.classList.remove('active');
+                mobileMenu.classList.remove('active');
+                hamburger.setAttribute('aria-expanded', 'false');
+                mobileMenu.setAttribute('aria-hidden', 'true');
+                document.body.style.overflow = '';
+            }
+        });
+
         // Scroll reveal animations
         const observerOptions = {
             root: null,
@@ -964,26 +1192,14 @@
             progressBar.style.width = scrolled + '%';
         });
 
-        // Magnetic button effect
-        document.querySelectorAll('.btn').forEach(btn => {
-            btn.addEventListener('mousemove', (e) => {
-                const rect = btn.getBoundingClientRect();
-                const x = e.clientX - rect.left - rect.width / 2;
-                const y = e.clientY - rect.top - rect.height / 2;
-
-                btn.style.transform = `translate(${x * 0.1}px, ${y * 0.1}px) scale(1.05)`;
-            });
-
-            btn.addEventListener('mouseleave', () => {
-                btn.style.transform = 'translate(0, 0) scale(1)';
-            });
-        });
-
         // Smooth scroll for navigation links
         document.querySelectorAll('a[href^="#"]').forEach(anchor => {
             anchor.addEventListener('click', function (e) {
+                const targetId = this.getAttribute('href');
+                if (targetId === '#') return;
+                
                 e.preventDefault();
-                const target = document.querySelector(this.getAttribute('href'));
+                const target = document.querySelector(targetId);
                 if (target) {
                     target.scrollIntoView({
                         behavior: 'smooth',
@@ -991,33 +1207,6 @@
                     });
                 }
             });
-        });
-
-        // Terminal typing effect on scroll
-        const terminalLines = document.querySelectorAll('.terminal-line');
-        const terminalObserver = new IntersectionObserver((entries) => {
-            entries.forEach((entry) => {
-                if (entry.isIntersecting) {
-                    const command = entry.target.querySelector('.command');
-                    if (command) {
-                        const text = command.textContent;
-                        command.textContent = '';
-                        let i = 0;
-                        const typeWriter = () => {
-                            if (i < text.length) {
-                                command.textContent += text.charAt(i);
-                                i++;
-                                setTimeout(typeWriter, 30);
-                            }
-                        };
-                        typeWriter();
-                    }
-                }
-            });
-        }, { threshold: 0.5 });
-
-        terminalLines.forEach(line => {
-            terminalObserver.observe(line);
         });
     </script>
 </body>
