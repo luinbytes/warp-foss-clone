@@ -91,9 +91,10 @@ var (
 
 // CommandBlock represents a command + its output
 type CommandBlock struct {
-	Command string
-	Output  string
-	IsAI    bool
+	Command   string
+	Output    string
+	IsAI      bool
+	ExitCode  int // Exit code from shell command (0 = success)
 }
 
 // Model is the main application state
@@ -118,9 +119,10 @@ type Model struct {
 
 // CommandExecMsg is sent when a command finishes executing
 type CommandExecMsg struct {
-	Command string
-	Output  string
-	Error   error
+	Command  string
+	Output   string
+	Error    error
+	ExitCode int // Exit code from shell command
 }
 
 // InitialModel creates the initial application state
@@ -315,9 +317,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			output = "(no output)"
 		}
 		m.blocks = append(m.blocks, CommandBlock{
-			Command: msg.Command,
-			Output:  output,
-			IsAI:    false,
+			Command:  msg.Command,
+			Output:   output,
+			IsAI:     false,
+			ExitCode: msg.ExitCode,
 		})
 		m.updateViewport()
 
@@ -383,6 +386,18 @@ func (m *Model) updateViewport() {
 		}
 		cmdLine := fmt.Sprintf("%s %s", prompt, cmdInputStyle.Render(block.Command))
 		blockContent.WriteString(cmdLine + "\n")
+
+		// Exit code indicator (only show for non-zero exit codes)
+		if !block.IsAI && block.ExitCode != 0 {
+			exitCodeStr := fmt.Sprintf("Exit code: %d", block.ExitCode)
+			var exitCodeStyle lipgloss.Style
+			if block.ExitCode > 0 {
+				exitCodeStyle = outputStyle.Foreground(themeRed)
+			} else {
+				exitCodeStyle = outputStyle.Foreground(themeGreen)
+			}
+			blockContent.WriteString(exitCodeStyle.Render(exitCodeStr) + "\n")
+		}
 
 		// Output - strip ANSI codes before adding to prevent width overflow
 		if block.Output != "" {
@@ -519,6 +534,16 @@ func executeCommand(originalInput, cmdStr, desc string) tea.Cmd {
 
 		output, err := cmd.CombinedOutput()
 
+		// Extract exit code from error if present
+		exitCode := 0
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			} else {
+				exitCode = 1 // Default to 1 for other errors
+			}
+		}
+
 		// Build the output string
 		var result string
 		if desc != "" {
@@ -528,9 +553,10 @@ func executeCommand(originalInput, cmdStr, desc string) tea.Cmd {
 		}
 
 		return CommandExecMsg{
-			Command: originalInput,
-			Output:  result,
-			Error:   err,
+			Command:  originalInput,
+			Output:   result,
+			Error:    err,
+			ExitCode: exitCode,
 		}
 	}
 }
