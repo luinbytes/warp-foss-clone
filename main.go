@@ -709,7 +709,7 @@ func main() {
 	}
 }
 
-// executeCommand runs a shell command asynchronously
+// executeCommand runs a shell command asynchronously using PTY for better shell integration
 func executeCommand(originalInput, cmdStr, desc, cwd string) tea.Cmd {
 	return func() tea.Msg {
 		var shell, flag string
@@ -721,9 +721,7 @@ func executeCommand(originalInput, cmdStr, desc, cwd string) tea.Cmd {
 			flag = "-c"
 		}
 
-		cmd := exec.Command(shell, flag, cmdStr)
-		cmd.Dir = cwd
-		output, err := cmd.CombinedOutput()
+		output, err := PTYCommand(shell, flag, cmdStr, cwd)
 
 		// Extract exit code
 		exitCode := 0
