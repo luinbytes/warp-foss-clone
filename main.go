@@ -101,6 +101,8 @@ var (
 	helpStyle           lipgloss.Style
 	aiIndicatorStyle    lipgloss.Style
 	spinnerStyle        lipgloss.Style
+	exitCodeStyle       lipgloss.Style
+	exitCodeErrorStyle  lipgloss.Style
 )
 
 // initStyles sets up all lipgloss styles using the correct border for the platform.
@@ -145,16 +147,36 @@ func initStyles() {
 
 	spinnerStyle = lipgloss.NewStyle().
 		Foreground(themeYellow)
+
+	exitCodeStyle = lipgloss.NewStyle().
+		Foreground(themeGreen).
+		Faint(true)
+
+	exitCodeErrorStyle = lipgloss.NewStyle().
+		Foreground(themeRed).
+		Faint(true)
 }
 
 // suggestionStyle renders auto-suggestion text (grayed out, dim)
 var suggestionStyle = lipgloss.NewStyle().Foreground(themeMuted).Faint(true)
 
+// formatExitCode returns a styled exit code indicator
+func formatExitCode(exitCode int) string {
+	if exitCode == -1 {
+		return "" // Not applicable (e.g., AI responses)
+	}
+	if exitCode == 0 {
+		return exitCodeStyle.Render(" ✓")
+	}
+	return exitCodeErrorStyle.Render(fmt.Sprintf(" ✗[%d]", exitCode))
+}
+
 // CommandBlock represents a command + its output
 type CommandBlock struct {
-	Command string
-	Output  string
-	IsAI    bool
+	Command  string
+	Output   string
+	IsAI     bool
+	ExitCode int // Exit code from shell command (0 = success, -1 = not applicable)
 }
 
 // Model is the main application state
@@ -185,9 +207,10 @@ type Model struct {
 
 // CommandExecMsg is sent when a command finishes executing
 type CommandExecMsg struct {
-	Command string
-	Output  string
-	Error   error
+	Command  string
+	Output   string
+	Error    error
+	ExitCode int // Exit code from shell command
 }
 
 // InitialModel creates the initial application state
@@ -299,10 +322,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				if err := os.Chdir(target); err != nil {
-					m.blocks = append(m.blocks, CommandBlock{Command: input, Output: fmt.Sprintf("cd: %s", err), IsAI: false})
+					m.blocks = append(m.blocks, CommandBlock{Command: input, Output: fmt.Sprintf("cd: %s", err), IsAI: false, ExitCode: -1})
 				} else {
 					m.cwd, _ = os.Getwd()
-					m.blocks = append(m.blocks, CommandBlock{Command: input, Output: fmt.Sprintf("Changed directory to %s", m.cwd), IsAI: false})
+					m.blocks = append(m.blocks, CommandBlock{Command: input, Output: fmt.Sprintf("Changed directory to %s", m.cwd), IsAI: false, ExitCode: -1})
 				}
 				m.textInput.SetValue("")
 				m.updateViewport()
@@ -311,7 +334,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Handle /search command - filter command history by query
 			if strings.HasPrefix(input, "/search ") {
 				query := strings.TrimSpace(strings.TrimPrefix(input, "/search "))
-				m.blocks = append(m.blocks, CommandBlock{Command: input, Output: m.searchHistory(query), IsAI: false})
+				m.blocks = append(m.blocks, CommandBlock{Command: input, Output: m.searchHistory(query), IsAI: false, ExitCode: -1})
 				m.textInput.SetValue("")
 				m.updateViewport()
 				return m, nil
@@ -319,14 +342,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Handle /pwd command - print working directory
 			if input == "/pwd" {
-				m.blocks = append(m.blocks, CommandBlock{Command: input, Output: m.cwd, IsAI: false})
+				m.blocks = append(m.blocks, CommandBlock{Command: input, Output: m.cwd, IsAI: false, ExitCode: -1})
 				m.textInput.SetValue("")
 				m.updateViewport()
 				return m, nil
 			}
 			if input == "/search" {
 				// No query - show usage
-				m.blocks = append(m.blocks, CommandBlock{Command: "/search", Output: "Usage: /search <query>\nSearches your command history.\nExample: /search git\n\n" + m.searchHistory(""), IsAI: false})
+				m.blocks = append(m.blocks, CommandBlock{Command: "/search", Output: "Usage: /search <query>\nSearchs your command history.\nExample: /search git\n\n" + m.searchHistory(""), IsAI: false, ExitCode: -1})
 				m.textInput.SetValue("")
 				m.updateViewport()
 				return m, nil
@@ -406,9 +429,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case AIResponseMsg:
 		m.aiLoading = false
 		m.blocks = append(m.blocks, CommandBlock{
-			Command: m.aiPrompt,
-			Output:  msg.Response,
-			IsAI:    true,
+			Command:  m.aiPrompt,
+			Output:   msg.Response,
+			IsAI:     true,
+			ExitCode: -1, // Not applicable for AI responses
 		})
 		m.updateViewport()
 
@@ -423,9 +447,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			output = "(no output)"
 		}
 		m.blocks = append(m.blocks, CommandBlock{
-			Command: msg.Command,
-			Output:  output,
-			IsAI:    false,
+			Command:  msg.Command,
+			Output:   output,
+			IsAI:     false,
+			ExitCode: msg.ExitCode,
 		})
 		m.updateViewport()
 
@@ -545,7 +570,12 @@ func (m *Model) updateViewport() {
 		if block.IsAI {
 			prompt = aiIndicatorStyle.Render(safeAIPrompt())
 		}
-		cmdLine := fmt.Sprintf("%s %s", prompt, cmdInputStyle.Render(block.Command))
+		// Add exit code indicator for non-AI commands
+		exitIndicator := ""
+		if !block.IsAI {
+			exitIndicator = formatExitCode(block.ExitCode)
+		}
+		cmdLine := fmt.Sprintf("%s %s%s", prompt, cmdInputStyle.Render(block.Command), exitIndicator)
 		blockContent.WriteString(cmdLine + "\n")
 
 		if block.Output != "" {
@@ -695,6 +725,16 @@ func executeCommand(originalInput, cmdStr, desc, cwd string) tea.Cmd {
 		cmd.Dir = cwd
 		output, err := cmd.CombinedOutput()
 
+		// Extract exit code
+		exitCode := 0
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				exitCode = exitErr.ExitCode()
+			} else {
+				exitCode = 1 // Generic error
+			}
+		}
+
 		var result string
 		if desc != "" {
 			result = fmt.Sprintf("[NLP -> %s]\n%s\n\n%s", cmdStr, desc, string(output))
@@ -703,9 +743,10 @@ func executeCommand(originalInput, cmdStr, desc, cwd string) tea.Cmd {
 		}
 
 		return CommandExecMsg{
-			Command: originalInput,
-			Output:  result,
-			Error:   err,
+			Command:  originalInput,
+			Output:   result,
+			Error:    err,
+			ExitCode: exitCode,
 		}
 	}
 }
