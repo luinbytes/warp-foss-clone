@@ -384,6 +384,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlDown:
 			// Navigate forward through command history
 			return m.handleHistoryNavDown()
+		case tea.KeyCtrlL:
+			// Clear the viewport (like a real terminal)
+			m.blocks = make([]CommandBlock, 0)
+			m.updateViewport()
+			return m, nil
 		}
 
 	case tea.WindowSizeMsg:
@@ -637,7 +642,7 @@ func (m Model) View() string {
 	b.WriteString(inputBar + "\n")
 
 	// Help bar
-	help := helpStyle.Render("Tab: AI • →: Accept suggestion • Ctrl+Up/Down: History • ↑↓/PgUp/PgDn: Scroll • /history: History • /search: Find • Ctrl+C: Quit")
+	help := helpStyle.Render("Tab: AI • →: Accept suggestion • Ctrl+L: Clear • Ctrl+Up/Down: History • ↑↓/PgUp/PgDn: Scroll • /history: History • /search: Find • Ctrl+C: Quit")
 	b.WriteString(help)
 
 	return b.String()
