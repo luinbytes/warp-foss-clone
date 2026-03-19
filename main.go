@@ -177,6 +177,10 @@ type Model struct {
 	showHistory bool
 	cwd        string
 	config      Config
+	// History navigation (arrow key cycling)
+	historyNavActive bool
+	historyNavIndex  int
+	savedInput       string
 }
 
 // CommandExecMsg is sent when a command finishes executing
@@ -267,6 +271,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			input := strings.TrimSpace(m.textInput.Value())
 			m.suggestion = ""
+			// Reset history navigation on submit
+			m.historyNavActive = false
+			m.historyNavIndex = 0
+			m.savedInput = ""
+
 			if input == "" {
 				return m, nil
 			}
@@ -299,10 +308,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateViewport()
 				return m, nil
 			}
+			// Handle /search command - filter command history by query
+			if strings.HasPrefix(input, "/search ") {
+				query := strings.TrimSpace(strings.TrimPrefix(input, "/search "))
+				m.blocks = append(m.blocks, CommandBlock{Command: input, Output: m.searchHistory(query), IsAI: false})
+				m.textInput.SetValue("")
+				m.updateViewport()
+				return m, nil
+			}
 
 			// Handle /pwd command - print working directory
 			if input == "/pwd" {
 				m.blocks = append(m.blocks, CommandBlock{Command: input, Output: m.cwd, IsAI: false})
+				m.textInput.SetValue("")
+				m.updateViewport()
+				return m, nil
+			}
+			if input == "/search" {
+				// No query - show usage
+				m.blocks = append(m.blocks, CommandBlock{Command: "/search", Output: "Usage: /search <query>\nSearches your command history.\nExample: /search git\n\n" + m.searchHistory(""), IsAI: false})
 				m.textInput.SetValue("")
 				m.updateViewport()
 				return m, nil
@@ -354,6 +378,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyDown:
 			m.viewport.LineDown(1)
 			return m, nil
+		case tea.KeyCtrlUp:
+			// Navigate backward through command history
+			return m.handleHistoryNavUp()
+		case tea.KeyCtrlDown:
+			// Navigate forward through command history
+			return m.handleHistoryNavDown()
 		}
 
 	case tea.WindowSizeMsg:
@@ -428,6 +458,67 @@ func stubAICall(prompt string) tea.Cmd {
 		response := fmt.Sprintf("AI Response to: %q\n\n[This is a placeholder - wire up your AI API key here]", prompt)
 		return AIResponseMsg{Response: response}
 	}
+}
+
+// searchHistory returns a formatted list of history entries matching query (empty = all)
+func (m *Model) searchHistory(query string) string {
+	if len(m.history) == 0 {
+		return "No commands in history yet."
+	}
+
+	var matches []string
+	q := strings.ToLower(query)
+	for i := len(m.history) - 1; i >= 0; i-- {
+		entry := m.history[i]
+		if query == "" || strings.Contains(strings.ToLower(entry), q) {
+			matches = append(matches, entry)
+		}
+	}
+
+	if len(matches) == 0 {
+		return fmt.Sprintf("No matches found for %q.", query)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Found %d match(es):\n\n", len(matches))
+	for i, entry := range matches {
+		fmt.Fprintf(&b, "  %4d  %s\n", i+1, entry)
+	}
+	return b.String()
+}
+
+// handleHistoryNavUp navigates backward through command history
+func (m Model) handleHistoryNavUp() (tea.Model, tea.Cmd) {
+	if len(m.history) == 0 {
+		return m, nil
+	}
+	// Save current input when first entering history nav
+	if !m.historyNavActive {
+		m.savedInput = m.textInput.Value()
+		m.historyNavActive = true
+		m.historyNavIndex = len(m.history) - 1
+	} else if m.historyNavIndex > 0 {
+		m.historyNavIndex--
+	}
+	m.textInput.SetValue(m.history[m.historyNavIndex])
+	return m, nil
+}
+
+// handleHistoryNavDown navigates forward through command history
+func (m Model) handleHistoryNavDown() (tea.Model, tea.Cmd) {
+	if !m.historyNavActive {
+		return m, nil
+	}
+	if m.historyNavIndex < len(m.history)-1 {
+		m.historyNavIndex++
+		m.textInput.SetValue(m.history[m.historyNavIndex])
+	} else {
+		// Past the end - restore saved input
+		m.historyNavActive = false
+		m.historyNavIndex = 0
+		m.textInput.SetValue(m.savedInput)
+	}
+	return m, nil
 }
 
 // updateViewport re-renders all command blocks into the viewport
@@ -546,7 +637,7 @@ func (m Model) View() string {
 	b.WriteString(inputBar + "\n")
 
 	// Help bar
-	help := helpStyle.Render("Tab: AI • →: Accept suggestion • ↑↓/PgUp/PgDn: Scroll • /history: History • Ctrl+C: Quit")
+	help := helpStyle.Render("Tab: AI • →: Accept suggestion • Ctrl+Up/Down: History • ↑↓/PgUp/PgDn: Scroll • /history: History • /search: Find • Ctrl+C: Quit")
 	b.WriteString(help)
 
 	return b.String()
